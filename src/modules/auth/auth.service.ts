@@ -134,4 +134,16 @@ export class AuthService {
 
     return { user: data.user };
   }
+
+  async logout(authHeader?: string): Promise<{ user: User }> {
+    const token = authHeader?.replace('Bearer ', '');
+    if (!token) throw new UnauthorizedException('Missing access token');
+
+    const { data, error } = await supabase.auth.getUser(token);
+    if (error || !data.user) throw new UnauthorizedException(error?.message);
+
+    await supabase.auth.signOut();
+
+    return { user: data.user };
+  }
 }

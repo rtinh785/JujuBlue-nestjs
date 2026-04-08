@@ -69,4 +69,11 @@ export class AuthController {
   me(@Headers('authorization') authHeader: string): Promise<{ user: User }> {
     return this.authService.me(authHeader);
   }
+
+  @Post('logout')
+  logout(
+    @Headers('authorization') authHeader: string,
+  ): Promise<{ user: User }> {
+    return this.authService.logout(authHeader);
+  }
 }

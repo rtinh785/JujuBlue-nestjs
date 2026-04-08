@@ -5,27 +5,18 @@ import {
 } from '@nestjs/common';
 import { supabase } from '../../libs/supabase/supabase';
 import type { User, AuthError, PostgrestError } from '@supabase/supabase-js';
-
-type Profile = {
-  id: string;
-  username: string;
-  display_name: string;
-  avatar_url: string | null;
-  bio: string | null;
-  location: string | null;
-  website: string | null;
-  created_at: string | null;
-  updated_at: string | null;
-  date_of_birth: string | null;
-  cover_photo_url: string | null;
-  cover_photo_offset_y: number | null;
-};
+import { Profile } from './dto/getMyProfile.dto';
+import { UpdateProfilePayload } from './dto/updateMyProfile';
+import { randomUUID } from 'node:crypto';
+import { ERROR } from '../../core/constants/message';
+import { getUserId } from '../../helpers/getUserId';
+import { updateProfile } from '../../helpers/updateProfile';
 
 @Injectable()
 export class ProfilesService {
   async me(authHeader?: string) {
     const token = authHeader?.replace('Bearer ', '');
-    if (!token) throw new UnauthorizedException('Missing access token');
+    if (!token) throw new UnauthorizedException(ERROR.MISSING_ACCESS_TOKEN);
 
     const { data: userData, error: userError } = (await supabase.auth.getUser(
       token,
@@ -50,7 +41,6 @@ export class ProfilesService {
     };
 
     if (profileError) throw new BadRequestException(profileError.message);
-
     if (profile) return { profile };
 
     const meta = (userData.user.user_metadata ?? {}) as {
@@ -80,5 +70,72 @@ export class ProfilesService {
     if (createError) throw new BadRequestException(createError.message);
 
     return { profile: newProfile };
+  }
+
+  async updateMe(
+    authHeader?: string,
+    payload?: UpdateProfilePayload,
+  ): Promise<{ profile: Profile }> {
+    const userId = await getUserId(authHeader);
+    const profile = await updateProfile(userId, payload ?? {});
+    return { profile };
+  }
+
+  async uploadAvatar(
+    authHeader?: string,
+    file?: Express.Multer.File,
+  ): Promise<{ profile: Profile }> {
+    const userId = await getUserId(authHeader);
+    if (!file) throw new BadRequestException(ERROR.MISSING_FILE);
+
+    const ext = file.originalname.split('.').pop() || 'jpg';
+    const fileName = `avatars/${userId}/${randomUUID()}.${ext}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('images')
+      .upload(fileName, file.buffer, {
+        contentType: file.mimetype,
+        upsert: true,
+      });
+
+    if (uploadError) throw new BadRequestException(uploadError.message);
+
+    const { data: publicUrl } = supabase.storage
+      .from('images')
+      .getPublicUrl(fileName);
+
+    const profile = await updateProfile(userId, {
+      avatar_url: publicUrl.publicUrl,
+    });
+    return { profile };
+  }
+
+  async uploadCover(
+    authHeader?: string,
+    file?: Express.Multer.File,
+  ): Promise<{ profile: Profile }> {
+    const userId = await getUserId(authHeader);
+    if (!file) throw new BadRequestException(ERROR.MISSING_FILE);
+
+    const ext = file.originalname.split('.').pop() || 'jpg';
+    const fileName = `cover-photos/${userId}/${randomUUID()}.${ext}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('images')
+      .upload(fileName, file.buffer, {
+        contentType: file.mimetype,
+        upsert: true,
+      });
+
+    if (uploadError) throw new BadRequestException(uploadError.message);
+
+    const { data: publicUrl } = supabase.storage
+      .from('images')
+      .getPublicUrl(fileName);
+
+    const profile = await updateProfile(userId, {
+      cover_photo_url: publicUrl.publicUrl,
+    });
+    return { profile };
   }
 }
