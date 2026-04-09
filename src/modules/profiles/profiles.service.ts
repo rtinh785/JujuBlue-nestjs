@@ -41,7 +41,8 @@ export class ProfilesService {
     };
 
     if (profileError) throw new BadRequestException(profileError.message);
-    if (profile) return { profile };
+    console.log(profile);
+    if (profile) return profile;
 
     const meta = (userData.user.user_metadata ?? {}) as {
       full_name?: string;
@@ -137,5 +138,20 @@ export class ProfilesService {
       cover_photo_url: publicUrl.publicUrl,
     });
     return { profile };
+  }
+
+  async getProfileById(id: string): Promise<Profile> {
+    const { data, error } = (await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', id)
+      .single()) as {
+      data: Profile;
+      error: PostgrestError | null;
+    };
+
+    if (error) throw new BadRequestException(error.message);
+
+    return data;
   }
 }

@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Headers,
+  Param,
   Patch,
   Post,
   UploadedFile,
@@ -46,5 +47,10 @@ export class ProfilesController {
     @Headers('authorization') authHeader: string,
   ) {
     return this.profilesService.uploadCover(authHeader, file);
+  }
+
+  @Get(':id')
+  getProfileById(@Param('id') id: string): Promise<Profile> {
+    return this.profilesService.getProfileById(id);
   }
 }
