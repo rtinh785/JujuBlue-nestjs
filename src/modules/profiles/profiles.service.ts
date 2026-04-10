@@ -41,7 +41,7 @@ export class ProfilesService {
     };
 
     if (profileError) throw new BadRequestException(profileError.message);
-    console.log(profile);
+
     if (profile) return profile;
 
     const meta = (userData.user.user_metadata ?? {}) as {
