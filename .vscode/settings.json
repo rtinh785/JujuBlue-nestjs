@@ -5,5 +5,27 @@
       "args": ["--login", "-i"]
     }
   },
-  "terminal.integrated.defaultProfile.windows": "Command Prompt"
+  "terminal.integrated.defaultProfile.windows": "Command Prompt",
+  "editor.formatOnSave": false,
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "never",
+    "source.organizeImports": "never"
+  },
+  "files.watcherExclude": {
+    "**/dist/**": true,
+    "**/coverage/**": true,
+    "**/node_modules/**": true,
+    "**/.git/**": true,
+    "**/.nestjs/**": true
+  },
+  "search.exclude": {
+    "**/dist": true,
+    "**/coverage": true,
+    "**/node_modules": true
+  },
+  "js/ts.implicitProjectConfig.checkJs": false,
+  "js/ts.tsserver.maxTsServerMemory": 4096,
+  "eslint.run": "onType",
+  "eslint.validate": ["typescript"],
+  "typescript.tsserver.experimental.enableProjectDiagnostics": false
 }

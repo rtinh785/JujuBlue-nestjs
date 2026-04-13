@@ -146,4 +146,23 @@ export class AuthService {
 
     return { user: data.user };
   }
+
+  async refreshAccessToken(refreshToken: string) {
+    if (!refreshToken) {
+      throw new BadRequestException('Missing refresh token');
+    }
+
+    const { data, error } = await supabase.auth.refreshSession({
+      refresh_token: refreshToken,
+    });
+
+    if (error) {
+      throw new UnauthorizedException(error.message);
+    }
+
+    return {
+      session: data.session,
+      user: data.user,
+    };
+  }
 }

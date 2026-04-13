@@ -76,4 +76,9 @@ export class AuthController {
   ): Promise<{ user: User }> {
     return this.authService.logout(authHeader);
   }
+
+  @Post('refresh-access-token')
+  refreshAccessToken(@Body() body: { refresh_token: string }) {
+    return this.authService.refreshAccessToken(body.refresh_token);
+  }
 }
