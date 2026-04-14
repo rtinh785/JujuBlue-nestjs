@@ -9,9 +9,11 @@ import {
 } from '@nestjs/common';
 import { PostsService } from './posts.service';
 import { CreatePostDto } from './dto/create-post.dto';
-import { UseGuards } from '@nestjs/common';
+
 import { AccessTokenGuard } from '../../guards/access-token.guard';
 import { CurrentUserId } from '../../decorators/current-user-id.decorator';
+import { UploadedFiles, UseInterceptors, UseGuards } from '@nestjs/common';
+import { FilesInterceptor } from '@nestjs/platform-express';
 
 @Controller('posts')
 export class PostsController {
@@ -21,6 +23,16 @@ export class PostsController {
   @Post()
   createPost(@CurrentUserId() userId: string, @Body() body: CreatePostDto) {
     return this.postsService.createPost(userId, body);
+  }
+
+  @UseGuards(AccessTokenGuard)
+  @Post('upload-media')
+  @UseInterceptors(FilesInterceptor('files', 2)) // gắn file vào request
+  uploadMedia(
+    @CurrentUserId() userId: string,
+    @UploadedFiles() files: Express.Multer.File[], // thay vì dùng request.file thì dùng cái này tương tự với Guards nhen
+  ) {
+    return this.postsService.uploadMedia(userId, files);
   }
 
   @Get('feed')

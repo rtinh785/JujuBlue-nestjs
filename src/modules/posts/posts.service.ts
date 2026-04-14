@@ -2,6 +2,10 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { CreatePostDto } from './dto/create-post.dto';
 import { getUserId } from '../../helpers/getUserId';
 import { supabase } from '../../libs/supabase/supabase';
+import { POST_WITH_AUTHOR_SELECT } from '../../core/constants/post.select';
+import { randomUUID } from 'node:crypto';
+import { ERROR } from '../../core/constants/message';
+import { PostMediaItem } from '../../types/media.type';
 
 @Injectable()
 export class PostsService {
@@ -50,7 +54,7 @@ export class PostsService {
 
     const { data: publicPosts, error: publicPostsError } = await supabase
       .from('posts')
-      .select('*')
+      .select(POST_WITH_AUTHOR_SELECT)
       .eq('depth', 0)
       .eq('visibility', 'public');
 
@@ -64,7 +68,7 @@ export class PostsService {
           new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
       );
 
-      return { posts: sortedPublicPosts };
+      return sortedPublicPosts;
     }
 
     const { data: followingRows, error: followingError } = await supabase
@@ -83,7 +87,7 @@ export class PostsService {
     if (followingIds.length > 0) {
       const { data, error } = await supabase
         .from('posts')
-        .select('*')
+        .select(POST_WITH_AUTHOR_SELECT)
         .eq('depth', 0)
         .eq('visibility', 'followers')
         .in('author_id', followingIds);
@@ -97,7 +101,7 @@ export class PostsService {
 
     const { data: myPrivatePosts, error: myPrivatePostsError } = await supabase
       .from('posts')
-      .select('*')
+      .select(POST_WITH_AUTHOR_SELECT)
       .eq('depth', 0)
       .eq('author_id', viewerId)
       .in('visibility', ['followers', 'private']);
@@ -115,7 +119,7 @@ export class PostsService {
         new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
     );
 
-    return { posts: feedPosts };
+    return feedPosts;
   }
 
   async getProfilePosts(authHeader: string | undefined, userId: string) {
@@ -140,7 +144,7 @@ export class PostsService {
 
     let query = supabase
       .from('posts')
-      .select('*')
+      .select(POST_WITH_AUTHOR_SELECT)
       .eq('author_id', userId)
       .eq('depth', 0)
       .order('created_at', { ascending: false });
@@ -160,5 +164,52 @@ export class PostsService {
     }
 
     return { posts: data ?? [] };
+  }
+
+  async uploadMedia(
+    userId: string,
+    files?: Express.Multer.File[],
+  ): Promise<{ media: PostMediaItem[] }> {
+    if (!files || files.length === 0) {
+      throw new BadRequestException(ERROR.MISSING_FILE);
+    }
+
+    const uploadedMedia: PostMediaItem[] = [];
+
+    for (const file of files) {
+      const isImage = file.mimetype.startsWith('image/');
+      const isVideo = file.mimetype.startsWith('video/');
+
+      if (!isImage && !isVideo) {
+        throw new BadRequestException('Only image or video files are allowed');
+      }
+
+      const ext =
+        file.originalname.split('.').pop() || (isImage ? 'jpg' : 'mp4');
+      const folder = isImage ? 'post-images' : 'post-videos';
+      const fileName = `${folder}/${userId}/${randomUUID()}.${ext}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('images')
+        .upload(fileName, file.buffer, {
+          contentType: file.mimetype,
+          upsert: true,
+        });
+
+      if (uploadError) {
+        throw new BadRequestException(uploadError.message);
+      }
+
+      const { data: publicUrl } = supabase.storage
+        .from('images')
+        .getPublicUrl(fileName);
+
+      uploadedMedia.push({
+        url: publicUrl.publicUrl,
+        type: isImage ? 'image' : 'video',
+      });
+    }
+
+    return { media: uploadedMedia };
   }
 }
