@@ -4,8 +4,9 @@ import { getUserId } from '../../helpers/getUserId';
 import { supabase } from '../../libs/supabase/supabase';
 import { POST_WITH_AUTHOR_SELECT } from '../../core/constants/post.select';
 import { randomUUID } from 'node:crypto';
-import { ERROR } from '../../core/constants/message';
+import { ERROR, POST } from '../../core/constants/message';
 import { PostMediaItem } from '../../types/media.type';
+import { PostWithId, PostWithLikeStatus } from '../../types/post.type';
 
 @Injectable()
 export class PostsService {
@@ -17,13 +18,48 @@ export class PostsService {
     return getUserId(authHeader);
   }
 
+  private async attachLikeStatus(
+    posts: PostWithId[],
+    viewerId: string | null,
+  ): Promise<PostWithLikeStatus[]> {
+    if (!viewerId) {
+      return posts.map((post) => ({
+        ...post,
+        is_liked: false,
+      }));
+    }
+
+    const postIds = posts.map((post) => post.id);
+
+    if (postIds.length === 0) {
+      return [];
+    }
+
+    const { data: likedRows, error } = await supabase
+      .from('post_likes')
+      .select('post_id')
+      .eq('user_id', viewerId)
+      .in('post_id', postIds);
+
+    if (error) {
+      throw new BadRequestException(error.message);
+    }
+
+    const likedPostIds = new Set((likedRows ?? []).map((row) => row.post_id));
+
+    return posts.map((post) => ({
+      ...post,
+      is_liked: likedPostIds.has(post.id),
+    }));
+  }
+
   async createPost(userId: string, body: CreatePostDto) {
     const content = body.content?.trim() ?? '';
     const media = body.media ?? null;
     const visibility = body.visibility;
 
     if (!content && (!media || media.length === 0)) {
-      throw new BadRequestException('Post must have content or media');
+      throw new BadRequestException(POST.MISSING_CONTENT_OR_MEDIA);
     }
 
     const { data, error } = await supabase
@@ -181,7 +217,7 @@ export class PostsService {
       const isVideo = file.mimetype.startsWith('video/');
 
       if (!isImage && !isVideo) {
-        throw new BadRequestException('Only image or video files are allowed');
+        throw new BadRequestException(POST.INVALID_MEDIA_FILE_TYPE);
       }
 
       const ext =
@@ -211,5 +247,121 @@ export class PostsService {
     }
 
     return { media: uploadedMedia };
+  }
+
+  async likePost(userId: string, postId: string) {
+    if (!postId) {
+      throw new BadRequestException(ERROR.MISSING_POST_ID);
+    }
+
+    const { data: post, error: postError } = await supabase
+      .from('posts')
+      .select('id, likes_count')
+      .eq('id', postId)
+      .maybeSingle();
+
+    if (postError) {
+      throw new BadRequestException(postError.message);
+    }
+    if (!post) {
+      throw new BadRequestException(ERROR.POST_NOT_FOUND);
+    }
+
+    const { data: existingLike, error: existingLikeError } = await supabase
+      .from('post_likes')
+      .select('id')
+      .eq('post_id', postId)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (existingLikeError) {
+      throw new BadRequestException(existingLikeError.message);
+    }
+
+    if (existingLike) {
+      throw new BadRequestException(POST.ALREADY_LIKED);
+    }
+
+    const { error } = await supabase
+      .from('post_likes')
+      .insert({
+        post_id: postId,
+        user_id: userId,
+      })
+      .select('*')
+      .single();
+    if (error) {
+      throw new BadRequestException(error.message);
+    }
+
+    const { error: updatePostError } = await supabase
+      .from('posts')
+      .update({
+        likes_count: (post.likes_count ?? 0) + 1,
+      })
+      .eq('id', postId);
+
+    if (updatePostError) {
+      throw new BadRequestException(updatePostError.message);
+    }
+
+    return { message: POST.LIKE_SUCCESS };
+  }
+
+  async unlikePost(userId: string, postId: string) {
+    if (!postId) {
+      throw new BadRequestException(ERROR.MISSING_POST_ID);
+    }
+
+    const { data: post, error: postError } = await supabase
+      .from('posts')
+      .select('id, likes_count')
+      .eq('id', postId)
+      .maybeSingle();
+
+    if (postError) {
+      throw new BadRequestException(postError.message);
+    }
+
+    if (!post) {
+      throw new BadRequestException(ERROR.POST_NOT_FOUND);
+    }
+
+    const { data: existingLike, error: existingLikeError } = await supabase
+      .from('post_likes')
+      .select('id')
+      .eq('post_id', postId)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (existingLikeError) {
+      throw new BadRequestException(existingLikeError.message);
+    }
+
+    if (!existingLike) {
+      throw new BadRequestException(POST.NOT_LIKED_YET);
+    }
+
+    const { error: deleteLikeError } = await supabase
+      .from('post_likes')
+      .delete()
+      .eq('id', existingLike.id);
+
+    if (deleteLikeError) {
+      throw new BadRequestException(deleteLikeError.message);
+    }
+
+    const { error: updatePostError } = await supabase
+      .from('posts')
+      .update({
+        likes_count: Math.max((post.likes_count ?? 0) - 1, 0),
+      })
+      .eq('id', postId);
+
+    if (updatePostError) {
+      throw new BadRequestException(updatePostError.message);
+    }
+
+    return { message: POST.UNLIKE_SUCCESS };
   }
 }
