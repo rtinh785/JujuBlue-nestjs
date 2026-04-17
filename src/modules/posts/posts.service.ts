@@ -6,7 +6,7 @@ import { POST_WITH_AUTHOR_SELECT } from '../../core/constants/post.select';
 import { randomUUID } from 'node:crypto';
 import { ERROR, POST } from '../../core/constants/message';
 import { PostMediaItem } from '../../types/media.type';
-import { PostWithId, PostWithLikeStatus } from '../../types/post.type';
+import { PostWithId, PostWithStatus } from '../../types/post.type';
 
 @Injectable()
 export class PostsService {
@@ -18,14 +18,51 @@ export class PostsService {
     return getUserId(authHeader);
   }
 
+  private async getPostLikesSet(
+    userId: string,
+    postIds: string[],
+  ): Promise<Set<string>> {
+    if (postIds.length === 0) return new Set();
+
+    const { data, error } = await supabase
+      .from('post_likes')
+      .select('post_id')
+      .eq('user_id', userId)
+      .in('post_id', postIds)
+      .returns<{ post_id: string }[]>();
+
+    if (error) throw new BadRequestException(error.message);
+
+    return new Set(data.map((x) => x.post_id));
+  }
+
+  private async getPostBookmarksSet(
+    userId: string,
+    postIds: string[],
+  ): Promise<Set<string>> {
+    if (postIds.length === 0) return new Set();
+
+    const { data, error } = await supabase
+      .from('post_bookmarks')
+      .select('post_id')
+      .eq('user_id', userId)
+      .in('post_id', postIds)
+      .returns<{ post_id: string }[]>();
+
+    if (error) throw new BadRequestException(error.message);
+
+    return new Set(data.map((x) => x.post_id));
+  }
+
   private async attachLikeStatus(
     posts: PostWithId[],
     viewerId: string | null,
-  ): Promise<PostWithLikeStatus[]> {
+  ): Promise<PostWithStatus[]> {
     if (!viewerId) {
       return posts.map((post) => ({
         ...post,
         is_liked: false,
+        is_bookmark: false,
       }));
     }
 
@@ -35,21 +72,14 @@ export class PostsService {
       return [];
     }
 
-    const { data: likedRows, error } = await supabase
-      .from('post_likes')
-      .select('post_id')
-      .eq('user_id', viewerId)
-      .in('post_id', postIds);
+    const likedPostIds = await this.getPostLikesSet(viewerId, postIds);
 
-    if (error) {
-      throw new BadRequestException(error.message);
-    }
-
-    const likedPostIds = new Set((likedRows ?? []).map((row) => row.post_id));
+    const bookmarkedPostIds = await this.getPostBookmarksSet(viewerId, postIds);
 
     return posts.map((post) => ({
       ...post,
       is_liked: likedPostIds.has(post.id),
+      is_bookmark: bookmarkedPostIds.has(post.id),
     }));
   }
 
@@ -155,7 +185,9 @@ export class PostsService {
         new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
     );
 
-    return feedPosts;
+    const enrichedPosts = await this.attachLikeStatus(feedPosts, viewerId);
+
+    return enrichedPosts;
   }
 
   async getProfilePosts(authHeader: string | undefined, userId: string) {
@@ -363,5 +395,96 @@ export class PostsService {
     }
 
     return { message: POST.UNLIKE_SUCCESS };
+  }
+
+  async bookmarkPost(userId: string, postId: string) {
+    if (!postId) {
+      throw new BadRequestException(ERROR.MISSING_POST_ID);
+    }
+    const { data: post, error: postError } = await supabase
+      .from('posts')
+      .select('id')
+      .eq('id', postId)
+      .maybeSingle();
+
+    if (postError) {
+      throw new BadRequestException(postError.message);
+    }
+
+    if (!post) {
+      throw new BadRequestException(ERROR.POST_NOT_FOUND);
+    }
+
+    const { data: existing, error: existingError } = await supabase
+      .from('post_bookmarks')
+      .select('id')
+      .eq('post_id', postId)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (existingError) {
+      throw new BadRequestException(existingError.message);
+    }
+
+    if (existing) {
+      throw new BadRequestException(POST.ALREADY_BOOKMARKED);
+    }
+
+    const { error } = await supabase.from('post_bookmarks').insert({
+      post_id: postId,
+      user_id: userId,
+    });
+
+    if (error) {
+      throw new BadRequestException(error.message);
+    }
+
+    return { message: POST.BOOKMARK_SUCCESS };
+  }
+
+  async unbookmarkPost(userId: string, postId: string) {
+    if (!postId) {
+      throw new BadRequestException(ERROR.MISSING_POST_ID);
+    }
+
+    const { data: post, error: postError } = await supabase
+      .from('posts')
+      .select('id')
+      .eq('id', postId)
+      .maybeSingle();
+
+    if (postError) {
+      throw new BadRequestException(postError.message);
+    }
+
+    if (!post) {
+      throw new BadRequestException(ERROR.POST_NOT_FOUND);
+    }
+
+    const { data: existing, error: existingError } = await supabase
+      .from('post_bookmarks')
+      .select('id')
+      .eq('post_id', postId)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (existingError) {
+      throw new BadRequestException(existingError.message);
+    }
+
+    if (!existing) {
+      throw new BadRequestException(POST.NOT_BOOKMARKED_YET);
+    }
+
+    const { error: deleteError } = await supabase
+      .from('post_bookmarks')
+      .delete()
+      .eq('id', existing.id);
+
+    if (deleteError) {
+      throw new BadRequestException(deleteError.message);
+    }
+
+    return { message: POST.UNBOOKMARK_SUCCESS };
   }
 }

@@ -61,4 +61,22 @@ export class PostsController {
   unlikePost(@CurrentUserId() userId: string, @Param('postId') postId: string) {
     return this.postsService.unlikePost(userId, postId);
   }
+
+  @UseGuards(AccessTokenGuard)
+  @Post(':postId/bookmark')
+  bookmarkPost(
+    @CurrentUserId() userId: string,
+    @Param('postId') postId: string,
+  ) {
+    return this.postsService.bookmarkPost(userId, postId);
+  }
+
+  @UseGuards(AccessTokenGuard)
+  @Delete(':postId/bookmark')
+  unbookmarkPost(
+    @CurrentUserId() userId: string,
+    @Param('postId') postId: string,
+  ) {
+    return this.postsService.unbookmarkPost(userId, postId);
+  }
 }
