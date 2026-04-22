@@ -33,7 +33,7 @@ export class PostsService {
 
     if (error) throw new BadRequestException(error.message);
 
-    return new Set(data.map((x) => x.post_id));
+    return new Set((data ?? []).map((x) => x.post_id));
   }
 
   private async getPostBookmarksSet(
@@ -51,10 +51,10 @@ export class PostsService {
 
     if (error) throw new BadRequestException(error.message);
 
-    return new Set(data.map((x) => x.post_id));
+    return new Set((data ?? []).map((x) => x.post_id));
   }
 
-  private async attachLikeStatus(
+  private async attachViewerPostStatus(
     posts: PostWithId[],
     viewerId: string | null,
   ): Promise<PostWithStatus[]> {
@@ -134,7 +134,11 @@ export class PostsService {
           new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
       );
 
-      return sortedPublicPosts;
+      const enrichedPublicPosts = await this.attachViewerPostStatus(
+        sortedPublicPosts,
+        viewerId,
+      );
+      return enrichedPublicPosts;
     }
 
     const { data: followingRows, error: followingError } = await supabase
@@ -185,7 +189,10 @@ export class PostsService {
         new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
     );
 
-    const enrichedPosts = await this.attachLikeStatus(feedPosts, viewerId);
+    const enrichedPosts = await this.attachViewerPostStatus(
+      feedPosts,
+      viewerId,
+    );
 
     return enrichedPosts;
   }
@@ -231,7 +238,12 @@ export class PostsService {
       throw new BadRequestException(error.message);
     }
 
-    return { posts: data ?? [] };
+    const enrichedPosts = await this.attachViewerPostStatus(
+      data ?? [],
+      viewerId,
+    );
+
+    return { posts: enrichedPosts };
   }
 
   async uploadMedia(
@@ -486,5 +498,58 @@ export class PostsService {
     }
 
     return { message: POST.UNBOOKMARK_SUCCESS };
+  }
+
+  async getCounts(userId: string): Promise<{ postsCount: number }> {
+    const { count: postsCount, error: postsCountError } = await supabase
+      .from('posts')
+      .select('*', { count: 'exact', head: true })
+      .eq('author_id', userId);
+
+    if (postsCountError) throw new BadRequestException(postsCountError.message);
+
+    return {
+      postsCount: postsCount ?? 0,
+    };
+  }
+
+  async getBookmark(userId: string): Promise<PostWithStatus[]> {
+    const { data: bookmarks, error: bookmarkError } = await supabase
+      .from('post_bookmarks')
+      .select('post_id, created_at')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (bookmarkError) throw new BadRequestException(bookmarkError.message);
+
+    const postIds = (bookmarks ?? []).map((bookmark) => bookmark.post_id);
+
+    if (postIds.length === 0) return [];
+
+    const { data: bookmarkedPosts, error: bookmarkedPostsError } =
+      await supabase
+        .from('posts')
+        .select(POST_WITH_AUTHOR_SELECT)
+        .in('id', postIds);
+
+    if (bookmarkedPostsError) {
+      throw new BadRequestException(bookmarkedPostsError.message);
+    }
+
+    // Ví dụ: { id: 'p2', content: 'Bài 2' } =>    ['p2', { id: 'p2', content: 'Bài 2' }],
+    const postMap = new Map(
+      (bookmarkedPosts ?? []).map((post) => [post.id, post]),
+    );
+
+    const sortedBookmarkedPosts = postIds
+      .map((postId) => postMap.get(postId)) // lấy ra dc đúng thứ tự rồi nhưng vẫn chứa undefined
+      .filter((post): post is NonNullable<typeof post> => !!post); // lọc bỏ undefined
+
+    const enrichedPosts = await this.attachViewerPostStatus(
+      sortedBookmarkedPosts,
+      userId,
+    );
+
+    return enrichedPosts;
   }
 }

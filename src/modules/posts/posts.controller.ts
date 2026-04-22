@@ -79,4 +79,16 @@ export class PostsController {
   ) {
     return this.postsService.unbookmarkPost(userId, postId);
   }
+
+  @UseGuards(AccessTokenGuard)
+  @Get('counts')
+  getCount(@CurrentUserId() userId: string) {
+    return this.postsService.getCounts(userId);
+  }
+
+  @UseGuards(AccessTokenGuard)
+  @Get('bookmark')
+  getBookmark(@CurrentUserId() userId: string) {
+    return this.postsService.getBookmark(userId);
+  }
 }
