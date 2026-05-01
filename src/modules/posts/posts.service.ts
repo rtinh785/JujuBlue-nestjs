@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { CreatePostDto } from './dto/create-post.dto';
 import { getUserId } from '../../helpers/getUserId';
 import { supabase } from '../../libs/supabase/supabase';
@@ -6,7 +11,15 @@ import { POST_WITH_AUTHOR_SELECT } from '../../core/constants/post.select';
 import { randomUUID } from 'node:crypto';
 import { ERROR, POST } from '../../core/constants/message';
 import { PostMediaItem } from '../../types/media.type';
-import { PostWithId, PostWithStatus } from '../../types/post.type';
+import {
+  DeletePostResponse,
+  PostWithId,
+  PostWithStatus,
+  UpdatePostResponse,
+} from '../../types/post.type';
+import { CreateCommentDto } from './dto/create-comment.dto';
+import { Json } from '../../types/database.types';
+import { UpdatePostDto } from './dto/update-post.dto';
 
 @Injectable()
 export class PostsService {
@@ -82,10 +95,38 @@ export class PostsService {
       is_bookmark: bookmarkedPostIds.has(post.id),
     }));
   }
+  // giảm số lượng cmt
+  private async adjustCommentsCount(postId: string, amount: number) {
+    const { data: post, error: findError } = await supabase
+      .from('posts')
+      .select('comments_count')
+      .eq('id', postId)
+      .single();
+
+    if (findError || !post) {
+      throw new NotFoundException('Root post not found');
+    }
+
+    const currentCount = post.comments_count ?? 0;
+    const nextCount = Math.max(currentCount + amount, 0);
+
+    const { error: updateError } = await supabase
+      .from('posts')
+      .update({ comments_count: nextCount })
+      .eq('id', postId);
+
+    if (updateError) {
+      throw new BadRequestException(updateError.message);
+    }
+  }
 
   async createPost(userId: string, body: CreatePostDto) {
     const content = body.content?.trim() ?? '';
-    const media = body.media ?? null;
+    const media: Json[] | null =
+      body.media?.map((item) => ({
+        url: item.url,
+        type: item.type,
+      })) ?? null;
     const visibility = body.visibility;
 
     if (!content && (!media || media.length === 0)) {
@@ -113,6 +154,146 @@ export class PostsService {
     }
 
     return { post: data };
+  }
+
+  async updatePost(
+    postId: string,
+    userId: string,
+    body: UpdatePostDto,
+  ): Promise<UpdatePostResponse> {
+    const hasContent = body.content !== undefined;
+    const hasVisibility = body.visibility !== undefined;
+
+    if (!hasContent && !hasVisibility) {
+      throw new BadRequestException('Nothing to update');
+    }
+
+    const { data: existingPost, error: findError } = await supabase
+      .from('posts')
+      .select('*')
+      .eq('id', postId)
+      .single();
+
+    if (findError || !existingPost) {
+      throw new NotFoundException('Post not found');
+    }
+
+    if (existingPost.author_id !== userId) {
+      throw new ForbiddenException('You are not allowed to update this post');
+    }
+
+    const updateData: {
+      content?: string;
+      visibility?: string;
+    } = {};
+
+    if (hasContent) {
+      updateData.content = body.content?.trim() ?? '';
+    }
+
+    if (hasVisibility) {
+      updateData.visibility = body.visibility;
+    }
+
+    const { data: updatedPost, error: updateError } = await supabase
+      .from('posts')
+      .update(updateData)
+      .eq('id', postId)
+      .select('*')
+      .single();
+
+    if (updateError || !updatedPost) {
+      throw new BadRequestException(
+        updateError?.message || 'Failed to update post',
+      );
+    }
+
+    return {
+      message: 'Post updated successfully',
+      post: updatedPost,
+    };
+  }
+
+  async deletePost(
+    postId: string,
+    userId: string,
+  ): Promise<DeletePostResponse> {
+    const { data: targetPost, error: findError } = await supabase
+      .from('posts')
+      .select('*')
+      .eq('id', postId)
+      .single();
+
+    if (findError || !targetPost) {
+      throw new NotFoundException('Post not found');
+    }
+
+    if (targetPost.author_id !== userId) {
+      throw new ForbiddenException('You are not allowed to delete this post');
+    }
+
+    let postIdsToDelete: string[] = [targetPost.id];
+
+    if (targetPost.depth === 0) {
+      const { data: childPosts, error: childError } = await supabase
+        .from('posts')
+        .select('id')
+        .eq('root_post_id', targetPost.id);
+
+      if (childError) {
+        throw new BadRequestException(childError.message);
+      }
+
+      postIdsToDelete = [
+        targetPost.id,
+        ...(childPosts ?? []).map((post) => post.id),
+      ];
+    }
+
+    if (targetPost.depth === 1) {
+      const { data: replies, error: repliesError } = await supabase
+        .from('posts')
+        .select('id')
+        .eq('parent_post_id', targetPost.id)
+        .eq('depth', 2);
+
+      if (repliesError) {
+        throw new BadRequestException(repliesError.message);
+      }
+
+      postIdsToDelete = [
+        targetPost.id,
+        ...(replies ?? []).map((reply) => reply.id),
+      ];
+    }
+
+    await supabase.from('post_likes').delete().in('post_id', postIdsToDelete);
+    await supabase
+      .from('post_bookmarks')
+      .delete()
+      .in('post_id', postIdsToDelete);
+
+    const { error: deleteError } = await supabase
+      .from('posts')
+      .delete()
+      .in('id', postIdsToDelete);
+
+    if (deleteError) {
+      throw new BadRequestException(deleteError.message);
+    }
+
+    if (targetPost.depth === 1 || targetPost.depth === 2) {
+      const rootPostId = targetPost.root_post_id;
+
+      if (rootPostId) {
+        await this.adjustCommentsCount(rootPostId, -postIdsToDelete.length);
+      }
+    }
+
+    return {
+      message: 'Post deleted successfully',
+      deletedCount: postIdsToDelete.length,
+    };
   }
 
   async getFeed(authHeader?: string) {
@@ -551,5 +732,185 @@ export class PostsService {
     );
 
     return enrichedPosts;
+  }
+
+  async createComment(userId: string, postId: string, body: CreateCommentDto) {
+    if (!postId) {
+      throw new BadRequestException(ERROR.MISSING_POST_ID);
+    }
+
+    const content = body.content?.trim() ?? '';
+    const media: Json[] | null =
+      body.media?.map((item) => ({
+        url: item.url,
+        type: item.type,
+      })) ?? null;
+    const parentPostId = body.parentPostId ?? null;
+
+    if (!content && (!media || media.length === 0)) {
+      throw new BadRequestException(POST.MISSING_CONTENT_OR_MEDIA);
+    }
+
+    const { data: rootPost, error: rootPostError } = await supabase
+      .from('posts')
+      .select('id, depth, comments_count')
+      .eq('id', postId)
+      .maybeSingle();
+
+    if (rootPostError) {
+      throw new BadRequestException(rootPostError.message);
+    }
+
+    if (!rootPost || rootPost.depth !== 0) {
+      throw new BadRequestException(ERROR.POST_NOT_FOUND);
+    }
+
+    // Mặc định là tạo cmt cấp 1
+    let parentPostIdToSave: string = postId;
+    let rootPostIdToSave: string = postId;
+    let depth = 1;
+
+    if (parentPostId) {
+      const { data: parentPost, error: parentPostError } = await supabase
+        .from('posts')
+        .select('id, parent_post_id, root_post_id, depth')
+        .eq('id', parentPostId)
+        .maybeSingle();
+
+      if (parentPostError) {
+        throw new BadRequestException(parentPostError.message);
+      }
+
+      if (!parentPost) {
+        throw new BadRequestException('Parent comment not found');
+      }
+
+      const belongsToThisPost =
+        parentPost.root_post_id === postId ||
+        parentPost.parent_post_id === postId;
+
+      if (!belongsToThisPost) {
+        throw new BadRequestException(
+          'Parent comment does not belong to this post',
+        );
+      }
+      // kiểm tra parent comment phải là comment hoặc reply chứ không được là post gốc hay dữ liệu bất thường
+      if (parentPost.depth !== 1 && parentPost.depth !== 2) {
+        throw new BadRequestException('Invalid parent comment depth');
+      }
+
+      parentPostIdToSave =
+        parentPost.depth === 1
+          ? parentPost.id
+          : (parentPost.parent_post_id as string);
+
+      rootPostIdToSave = postId;
+      depth = 2;
+    }
+
+    const { data: createdComment, error: createCommentError } = await supabase
+      .from('posts')
+      .insert({
+        author_id: userId,
+        content,
+        media,
+        visibility: 'public',
+        parent_post_id: parentPostIdToSave,
+        root_post_id: rootPostIdToSave,
+        depth,
+        likes_count: 0,
+        comments_count: 0,
+      })
+      .select(POST_WITH_AUTHOR_SELECT)
+      .single();
+
+    if (createCommentError) {
+      throw new BadRequestException(createCommentError.message);
+    }
+
+    const nextCommentsCount = (rootPost.comments_count ?? 0) + 1;
+
+    const { error: updateRootPostError } = await supabase
+      .from('posts')
+      .update({
+        comments_count: nextCommentsCount,
+      })
+      .eq('id', postId);
+
+    if (updateRootPostError) {
+      throw new BadRequestException(updateRootPostError.message);
+    }
+
+    const [enrichedComment] = await this.attachViewerPostStatus(
+      createdComment ? [createdComment] : [],
+      userId,
+    );
+
+    return { comment: enrichedComment };
+  }
+
+  async getComments(postId: string, authHeader?: string) {
+    if (!postId) {
+      throw new BadRequestException(ERROR.MISSING_POST_ID);
+    }
+
+    const { data: rootPost, error: rootPostError } = await supabase
+      .from('posts')
+      .select('id, depth')
+      .eq('id', postId)
+      .maybeSingle();
+
+    if (rootPostError) {
+      throw new BadRequestException(rootPostError.message);
+    }
+
+    if (!rootPost || rootPost.depth !== 0) {
+      throw new BadRequestException(ERROR.POST_NOT_FOUND);
+    }
+
+    const { data: comments, error: commentsError } = await supabase
+      .from('posts')
+      .select(POST_WITH_AUTHOR_SELECT)
+      .eq('root_post_id', postId)
+      .in('depth', [1, 2])
+      .order('created_at', { ascending: true });
+
+    if (commentsError) {
+      throw new BadRequestException(commentsError.message);
+    }
+    const viewerId = await this.resolveViewerId(authHeader);
+
+    const enrichedComments = await this.attachViewerPostStatus(
+      comments ?? [],
+      viewerId,
+    );
+
+    const parentComments = enrichedComments
+      .filter((comment) => comment.depth === 1)
+      .map((comment) => ({
+        ...comment,
+        replies: [] as PostWithStatus[],
+      }));
+
+    const replies = enrichedComments.filter((comment) => comment.depth === 2);
+
+    const repliesMap = new Map<string, PostWithStatus[]>();
+
+    for (const reply of replies) {
+      const parentId = reply.parent_post_id;
+
+      if (typeof parentId !== 'string') continue;
+
+      const currentReplies = repliesMap.get(parentId) ?? [];
+      currentReplies.push(reply);
+      repliesMap.set(parentId, currentReplies);
+    }
+
+    const structuredComments = parentComments.map((comment) => ({
+      ...comment,
+      replies: repliesMap.get(comment.id) ?? [],
+    }));
+
+    return { comments: structuredComments };
   }
 }

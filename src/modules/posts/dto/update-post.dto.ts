@@ -1,4 +1,13 @@
-import { PartialType } from '@nestjs/mapped-types';
-import { CreatePostDto } from './create-post.dto';
+import { IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
+import { PostVisibility } from '../../../core/enums/post-visibility.enum';
 
-export class UpdatePostDto extends PartialType(CreatePostDto) {}
+export class UpdatePostDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(280)
+  content?: string;
+
+  @IsOptional()
+  @IsEnum(PostVisibility)
+  visibility?: PostVisibility;
+}

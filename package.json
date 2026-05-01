@@ -12,7 +12,7 @@
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
-    "gen:types": "npx supabase gen types typescript --project-id borugthjkhciimnpztxi --yes > src/types/database.types.ts",
+    "gen:types": "dotenv -e .env -- cross-env-shell \"pnpm dlx supabase gen types typescript --project-id $SUPABASE_PROJECT_ID --schema public > src/types/database.types.ts\"",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "test": "jest",
     "test:watch": "jest --watch",
@@ -28,6 +28,8 @@
     "@prisma/client": "^7.6.0",
     "@supabase/supabase-js": "^2.101.1",
     "@types/ejs": "^3.1.5",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.15.1",
     "ejs": "^5.0.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1"

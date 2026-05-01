@@ -1,8 +1,8 @@
 import {
   IsArray,
-  IsIn,
   IsOptional,
   IsString,
+  IsUUID,
   MaxLength,
   MinLength,
   ValidateNested,
@@ -10,11 +10,11 @@ import {
 import { Type } from 'class-transformer';
 import { PostMediaDto } from './post-media.dto';
 
-export class CreatePostDto {
+export class CreateCommentDto {
   @IsOptional()
   @IsString()
   @MinLength(1)
-  @MaxLength(5000)
+  @MaxLength(1000)
   content?: string;
 
   @IsOptional()
@@ -23,7 +23,7 @@ export class CreatePostDto {
   @Type(() => PostMediaDto)
   media?: PostMediaDto[] | null;
 
-  @IsString()
-  @IsIn(['public', 'followers', 'private'])
-  visibility!: 'public' | 'followers' | 'private';
+  @IsOptional()
+  @IsUUID()
+  parentPostId?: string;
 }

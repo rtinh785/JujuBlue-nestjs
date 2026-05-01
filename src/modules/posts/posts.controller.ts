@@ -5,17 +5,22 @@ import {
   Get,
   Headers,
   Param,
+  Patch,
   Post,
+  Req,
   UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { PostsService } from './posts.service';
 import { CreatePostDto } from './dto/create-post.dto';
-
+import { CreateCommentDto } from './dto/create-comment.dto';
+import { PostsService } from './posts.service';
 import { AccessTokenGuard } from '../../guards/access-token.guard';
+import type { AuthenticatedRequest } from '../../guards/access-token.guard';
 import { CurrentUserId } from '../../decorators/current-user-id.decorator';
 import { FilesInterceptor } from '@nestjs/platform-express';
+import { UpdatePostDto } from './dto/update-post.dto';
+import type { UpdatePostResponse } from '../../types/post.type';
 
 @Controller('posts')
 export class PostsController {
@@ -40,6 +45,25 @@ export class PostsController {
   @Get('feed')
   getFeed(@Headers('authorization') authHeader?: string) {
     return this.postsService.getFeed(authHeader);
+  }
+
+  @UseGuards(AccessTokenGuard)
+  @Patch(':postId')
+  updatePost(
+    @Param('postId') postId: string,
+    @Body() body: UpdatePostDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.postsService.updatePost(postId, req.user.id, body);
+  }
+
+  @UseGuards(AccessTokenGuard)
+  @Delete(':postId')
+  deletePost(
+    @Param('postId') postId: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.postsService.deletePost(postId, req.user.id);
   }
 
   @Get('profile/:userId')
@@ -90,5 +114,23 @@ export class PostsController {
   @Get('bookmark')
   getBookmark(@CurrentUserId() userId: string) {
     return this.postsService.getBookmark(userId);
+  }
+
+  @Get(':postId/comments')
+  getComments(
+    @Param('postId') postId: string,
+    @Headers('authorization') authHeader?: string,
+  ) {
+    return this.postsService.getComments(postId, authHeader);
+  }
+
+  @UseGuards(AccessTokenGuard)
+  @Post(':postId/comments')
+  createComment(
+    @CurrentUserId() userId: string,
+    @Param('postId') postId: string,
+    @Body() body: CreateCommentDto,
+  ) {
+    return this.postsService.createComment(userId, postId, body);
   }
 }
