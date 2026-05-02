@@ -163,8 +163,9 @@ export class PostsService {
   ): Promise<UpdatePostResponse> {
     const hasContent = body.content !== undefined;
     const hasVisibility = body.visibility !== undefined;
+    const hasMedia = body.media !== undefined;
 
-    if (!hasContent && !hasVisibility) {
+    if (!hasContent && !hasVisibility && !hasMedia) {
       throw new BadRequestException('Nothing to update');
     }
 
@@ -185,6 +186,7 @@ export class PostsService {
     const updateData: {
       content?: string;
       visibility?: string;
+      media?: Json | null;
     } = {};
 
     if (hasContent) {
@@ -193,6 +195,10 @@ export class PostsService {
 
     if (hasVisibility) {
       updateData.visibility = body.visibility;
+    }
+
+    if (hasMedia) {
+      updateData.media = (body.media ?? null) as Json | null;
     }
 
     const { data: updatedPost, error: updateError } = await supabase
