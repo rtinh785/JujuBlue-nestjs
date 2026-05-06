@@ -385,10 +385,12 @@ export class PostsService {
   }
 
   async getProfilePosts(authHeader: string | undefined, userId: string) {
+    // check coi có đăng nhập chưa
     const viewerId = await this.resolveViewerId(authHeader);
 
     let canSeeFollowersOnlyPosts = false;
 
+    // check coi có login chưa và không phải đang xem profile của mình
     if (viewerId && viewerId !== userId) {
       const { data: followRow, error: followError } = await supabase
         .from('follows')
@@ -403,7 +405,7 @@ export class PostsService {
 
       canSeeFollowersOnlyPosts = !!followRow;
     }
-
+    // query tất cả bài viết trước khi filter và cũng là trường hợp nếu như mình vào profile của mình
     let query = supabase
       .from('posts')
       .select(POST_WITH_AUTHOR_SELECT)
@@ -411,6 +413,7 @@ export class PostsService {
       .eq('depth', 0)
       .order('created_at', { ascending: false });
 
+    // nếu chưa đăng nhập thì chỉ xem đuọc bài công khai
     if (!viewerId) {
       query = query.eq('visibility', 'public');
     } else if (viewerId !== userId) {
@@ -478,6 +481,25 @@ export class PostsService {
     }
 
     return { media: uploadedMedia };
+  }
+
+  async getPostById(postId: string, authHeader?: string) {
+    const viewerId = await this.resolveViewerId(authHeader);
+
+    const { data, error } = await supabase
+      .from('posts')
+      .select(POST_WITH_AUTHOR_SELECT)
+      .eq('id', postId)
+      .eq('depth', 0)
+      .single();
+
+    if (error || !data) {
+      throw new NotFoundException('Post not found');
+    }
+
+    const [post] = await this.attachViewerPostStatus([data], viewerId);
+
+    return { post };
   }
 
   async likePost(userId: string, postId: string) {
@@ -691,7 +713,8 @@ export class PostsService {
     const { count: postsCount, error: postsCountError } = await supabase
       .from('posts')
       .select('*', { count: 'exact', head: true })
-      .eq('author_id', userId);
+      .eq('author_id', userId)
+      .eq('depth', 0);
 
     if (postsCountError) throw new BadRequestException(postsCountError.message);
 

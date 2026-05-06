@@ -20,7 +20,6 @@ import type { AuthenticatedRequest } from '../../guards/access-token.guard';
 import { CurrentUserId } from '../../decorators/current-user-id.decorator';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { UpdatePostDto } from './dto/update-post.dto';
-import type { UpdatePostResponse } from '../../types/post.type';
 
 @Controller('posts')
 export class PostsController {
@@ -114,6 +113,14 @@ export class PostsController {
   @Get('bookmark')
   getBookmark(@CurrentUserId() userId: string) {
     return this.postsService.getBookmark(userId);
+  }
+
+  @Get(':postId')
+  getPostById(
+    @Param('postId') postId: string,
+    @Headers('authorization') authHeader?: string,
+  ) {
+    return this.postsService.getPostById(postId, authHeader);
   }
 
   @Get(':postId/comments')
