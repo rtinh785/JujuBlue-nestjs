@@ -5,6 +5,7 @@ export type PostWithId = {
 export type PostWithStatus = PostWithId & {
   is_liked: boolean;
   is_bookmark: boolean;
+  shared_post?: PostWithStatus | null;
 };
 
 export type UpdatePostResponse = {

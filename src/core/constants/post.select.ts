@@ -8,6 +8,9 @@ export const POST_WITH_AUTHOR_SELECT = `
   depth,
   likes_count,
   comments_count,
+  shared_post_id,
+  was_shared_post,
+  shares_count,
   created_at,
   updated_at,
   author:profiles!posts_author_id_fkey (

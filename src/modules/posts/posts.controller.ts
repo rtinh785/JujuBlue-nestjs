@@ -20,6 +20,7 @@ import type { AuthenticatedRequest } from '../../guards/access-token.guard';
 import { CurrentUserId } from '../../decorators/current-user-id.decorator';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { UpdatePostDto } from './dto/update-post.dto';
+import { SharePostDto } from './dto/share-post.dto';
 
 @Controller('posts')
 export class PostsController {
@@ -139,5 +140,15 @@ export class PostsController {
     @Body() body: CreateCommentDto,
   ) {
     return this.postsService.createComment(userId, postId, body);
+  }
+
+  @UseGuards(AccessTokenGuard)
+  @Post(':postId/share')
+  sharePost(
+    @CurrentUserId() userId: string,
+    @Param('postId') postId: string,
+    @Body() body: SharePostDto,
+  ) {
+    return this.postsService.sharePost(userId, postId, body);
   }
 }

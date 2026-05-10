@@ -20,6 +20,14 @@ import {
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { Json } from '../../types/database.types';
 import { UpdatePostDto } from './dto/update-post.dto';
+import { SharePostDto } from './dto/share-post.dto';
+
+type ShareTargetPost = {
+  id: string;
+  shared_post_id: string | null;
+  was_shared_post: boolean;
+  depth: number | null;
+};
 
 @Injectable()
 export class PostsService {
@@ -120,8 +128,60 @@ export class PostsService {
     }
   }
 
+  private async attachSharedPosts(
+    posts: PostWithStatus[],
+    viewerId?: string | null,
+  ): Promise<PostWithStatus[]> {
+    const sharedPostIds = [
+      ...new Set(
+        posts
+          .map((post) => post.shared_post_id)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ]; // Lấy ra tất cả shared_post_id từ danh sách posts => ["123", "456"]
+
+    if (sharedPostIds.length === 0) {
+      return posts.map((post) => ({
+        ...post,
+        shared_post: null,
+      }));
+    }
+
+    const { data: sharedPosts, error: sharedPostsError } = await supabase
+      .from('posts')
+      .select(POST_WITH_AUTHOR_SELECT)
+      .in('id', sharedPostIds)
+      .eq('depth', 0);
+
+    if (sharedPostsError) {
+      throw new BadRequestException(sharedPostsError.message);
+    }
+
+    const sharedPostsWithStatus = await this.attachViewerPostStatus(
+      sharedPosts ?? [],
+      viewerId ?? null,
+    );
+
+    const sharedPostMap = new Map(
+      sharedPostsWithStatus.map((sharedPost) => [sharedPost.id, sharedPost]),
+    );
+
+    return posts.map((post) => {
+      const sharedPostId =
+        typeof post.shared_post_id === 'string' ? post.shared_post_id : null;
+
+      return {
+        ...post,
+        shared_post: sharedPostId
+          ? (sharedPostMap.get(sharedPostId) ?? null)
+          : null,
+      };
+    });
+  }
+
   async createPost(userId: string, body: CreatePostDto) {
     const content = body.content?.trim() ?? '';
+
     const media: Json[] | null =
       body.media?.map((item) => ({
         url: item.url,
@@ -145,6 +205,7 @@ export class PostsService {
         depth: 0,
         likes_count: 0,
         comments_count: 0,
+        was_shared_post: false,
       })
       .select('*')
       .single();
@@ -279,6 +340,22 @@ export class PostsService {
       .delete()
       .in('post_id', postIdsToDelete);
 
+    const sharedOriginalPostId =
+      typeof targetPost.shared_post_id === 'string'
+        ? targetPost.shared_post_id
+        : null;
+
+    if (sharedOriginalPostId) {
+      const { error: deleteShareLogError } = await supabase
+        .from('post_shares')
+        .delete()
+        .eq('shared_post_id', targetPost.id);
+
+      if (deleteShareLogError) {
+        throw new BadRequestException(deleteShareLogError.message);
+      }
+    }
+
     const { error: deleteError } = await supabase
       .from('posts')
       .delete()
@@ -293,6 +370,31 @@ export class PostsService {
 
       if (rootPostId) {
         await this.adjustCommentsCount(rootPostId, -postIdsToDelete.length);
+      }
+    }
+
+    if (sharedOriginalPostId) {
+      const { data: originalPost, error: originalPostError } = await supabase
+        .from('posts')
+        .select('shares_count')
+        .eq('id', sharedOriginalPostId)
+        .maybeSingle();
+
+      if (originalPostError) {
+        throw new BadRequestException(originalPostError.message);
+      }
+
+      if (originalPost) {
+        const { error: updateShareCountError } = await supabase
+          .from('posts')
+          .update({
+            shares_count: Math.max((originalPost.shares_count ?? 0) - 1, 0),
+          })
+          .eq('id', sharedOriginalPostId);
+
+        if (updateShareCountError) {
+          throw new BadRequestException(updateShareCountError.message);
+        }
       }
     }
 
@@ -325,7 +427,13 @@ export class PostsService {
         sortedPublicPosts,
         viewerId,
       );
-      return enrichedPublicPosts;
+
+      const publicPostsWithSharedPosts = await this.attachSharedPosts(
+        enrichedPublicPosts,
+        viewerId,
+      );
+
+      return publicPostsWithSharedPosts;
     }
 
     const { data: followingRows, error: followingError } = await supabase
@@ -380,8 +488,12 @@ export class PostsService {
       feedPosts,
       viewerId,
     );
+    const postsWithSharedPosts = await this.attachSharedPosts(
+      enrichedPosts,
+      viewerId,
+    );
 
-    return enrichedPosts;
+    return postsWithSharedPosts;
   }
 
   async getProfilePosts(authHeader: string | undefined, userId: string) {
@@ -432,8 +544,12 @@ export class PostsService {
       data ?? [],
       viewerId,
     );
+    const postsWithSharedPosts = await this.attachSharedPosts(
+      enrichedPosts,
+      viewerId,
+    );
 
-    return { posts: enrichedPosts };
+    return { posts: postsWithSharedPosts };
   }
 
   async uploadMedia(
@@ -497,9 +613,17 @@ export class PostsService {
       throw new NotFoundException('Post not found');
     }
 
-    const [post] = await this.attachViewerPostStatus([data], viewerId);
+    const [postWithStatus] = await this.attachViewerPostStatus(
+      [data],
+      viewerId,
+    );
 
-    return { post };
+    const [postWithSharedPost] = await this.attachSharedPosts(
+      [postWithStatus],
+      viewerId,
+    );
+
+    return { post: postWithSharedPost };
   }
 
   async likePost(userId: string, postId: string) {
@@ -759,8 +883,12 @@ export class PostsService {
       sortedBookmarkedPosts,
       userId,
     );
+    const postsWithSharedPosts = await this.attachSharedPosts(
+      enrichedPosts,
+      userId,
+    );
 
-    return enrichedPosts;
+    return postsWithSharedPosts;
   }
 
   async createComment(userId: string, postId: string, body: CreateCommentDto) {
@@ -941,5 +1069,121 @@ export class PostsService {
     }));
 
     return { comments: structuredComments };
+  }
+
+  async sharePost(userId: string, postId: string, body: SharePostDto) {
+    const content = body.content?.trim() ?? '';
+    const visibility = body.visibility ?? 'public';
+
+    const { data: targetPostData, error: targetPostError } = await supabase
+      .from('posts')
+      .select('id, shared_post_id, was_shared_post, depth')
+      .eq('id', postId)
+      .maybeSingle();
+
+    const targetPostRow = targetPostData as Record<string, unknown> | null;
+
+    const targetPost: ShareTargetPost | null = targetPostRow
+      ? {
+          id: typeof targetPostRow.id === 'string' ? targetPostRow.id : '',
+          shared_post_id:
+            typeof targetPostRow.shared_post_id === 'string'
+              ? targetPostRow.shared_post_id
+              : null,
+          was_shared_post:
+            typeof targetPostRow.was_shared_post === 'boolean'
+              ? targetPostRow.was_shared_post
+              : false,
+          depth:
+            typeof targetPostRow.depth === 'number'
+              ? targetPostRow.depth
+              : null,
+        }
+      : null;
+
+    if (targetPostError) {
+      throw new BadRequestException(targetPostError.message);
+    }
+
+    if (!targetPost || targetPost.depth !== 0) {
+      throw new BadRequestException('Post not found');
+    }
+
+    if (!targetPost.id) {
+      throw new BadRequestException('Post not found');
+    }
+
+    if (targetPost.was_shared_post && !targetPost.shared_post_id) {
+      throw new BadRequestException(
+        'Original shared post is no longer available',
+      );
+    }
+
+    const originalPostId = targetPost.shared_post_id ?? targetPost.id;
+
+    const { data: sharedPost, error: createSharedPostError } = await supabase
+      .from('posts')
+      .insert({
+        author_id: userId,
+        content,
+        media: null,
+        visibility,
+        parent_post_id: null,
+        root_post_id: null,
+        depth: 0,
+        likes_count: 0,
+        comments_count: 0,
+        shared_post_id: originalPostId,
+        shares_count: 0,
+        was_shared_post: true,
+      })
+      .select('*')
+      .single();
+
+    if (createSharedPostError || !sharedPost) {
+      throw new BadRequestException(
+        createSharedPostError?.message || 'Failed to share post',
+      );
+    }
+
+    const { error: createShareLogError } = await supabase
+      .from('post_shares')
+      .insert({
+        original_post_id: originalPostId,
+        shared_post_id: sharedPost.id,
+        user_id: userId,
+      });
+
+    if (createShareLogError) {
+      throw new BadRequestException(createShareLogError.message);
+    }
+
+    const { data: originalPost, error: originalPostError } = await supabase
+      .from('posts')
+      .select('id, shares_count')
+      .eq('id', originalPostId)
+      .single();
+
+    if (originalPostError || !originalPost) {
+      throw new BadRequestException(
+        originalPostError?.message || 'Original post not found',
+      );
+    }
+
+    const { error: updateShareCountError } = await supabase
+      .from('posts')
+      .update({
+        shares_count: (originalPost.shares_count ?? 0) + 1,
+      })
+      .eq('id', originalPostId);
+
+    if (updateShareCountError) {
+      throw new BadRequestException(updateShareCountError.message);
+    }
+
+    return {
+      message: 'Post shared successfully',
+      post: sharedPost,
+    };
   }
 }
