@@ -4,6 +4,12 @@ import { getUserId } from '../../helpers/getUserId';
 import { supabase } from '../../libs/supabase/supabase';
 import { PostgrestError } from '@supabase/supabase-js';
 import { CreateFollowDto } from './dto/createFollow.dto';
+import { NotificationsService } from '../notifications/notifications.service';
+import {
+  FOLLOW_ERROR,
+  FOLLOW_MESSAGE,
+  FOLLOW_SUGGESTION,
+} from '../../core/constants/follow.constant';
 export type FollowingProfile = {
   id: string;
   username: string;
@@ -12,6 +18,8 @@ export type FollowingProfile = {
 };
 @Injectable()
 export class FollowsService {
+  constructor(private readonly notificationsService: NotificationsService) {}
+
   async getSuggestions(
     authHeader?: string,
   ): Promise<{ profiles: SuggestedProfile[] }> {
@@ -42,7 +50,7 @@ export class FollowsService {
     const shuffled = [...(profiles ?? [])].sort(() => Math.random() - 0.5);
 
     return {
-      profiles: shuffled.slice(0, 5),
+      profiles: shuffled.slice(0, FOLLOW_SUGGESTION.LIMIT),
     };
   }
 
@@ -54,11 +62,11 @@ export class FollowsService {
     const followingUserId = body?.followingUserId;
 
     if (!followingUserId) {
-      throw new BadRequestException('Missing followingUserId');
+      throw new BadRequestException(FOLLOW_ERROR.MISSING_FOLLOWING_USER_ID);
     }
 
     if (followerId === followingUserId) {
-      throw new BadRequestException('You cannot follow yourself');
+      throw new BadRequestException(FOLLOW_ERROR.CANNOT_FOLLOW_YOURSELF);
     }
 
     const { error } = await supabase.from('follows').insert({
@@ -70,7 +78,15 @@ export class FollowsService {
       throw new BadRequestException(error.message);
     }
 
-    return { message: 'follow user successfully' };
+    await this.notificationsService.createNotification({
+      recipientId: followingUserId,
+      actorId: followerId,
+      type: 'follow_user',
+      targetUserId: followerId,
+      groupKey: `follow_user:${followingUserId}`,
+    });
+
+    return { message: FOLLOW_MESSAGE.FOLLOW_OK };
   }
 
   async checkFollowing(
@@ -79,7 +95,7 @@ export class FollowsService {
   ): Promise<{ isFollowing: boolean }> {
     const followerId = await getUserId(authHeader);
     if (!followingUserId) {
-      throw new BadRequestException('Missing followingUserId');
+      throw new BadRequestException(FOLLOW_ERROR.MISSING_FOLLOWING_USER_ID);
     }
 
     const { data, error } = (await supabase
@@ -104,7 +120,7 @@ export class FollowsService {
     const followerId = await getUserId(authHeader);
 
     if (!followingUserId) {
-      throw new BadRequestException('Missing followingUserId');
+      throw new BadRequestException(FOLLOW_ERROR.MISSING_FOLLOWING_USER_ID);
     }
 
     const { error } = await supabase
@@ -117,7 +133,7 @@ export class FollowsService {
       throw new BadRequestException(error.message);
     }
 
-    return { message: 'unfollow user successfully' };
+    return { message: FOLLOW_MESSAGE.UNFOLLOW_OK };
   }
 
   async getCounts(

@@ -8,7 +8,10 @@ import type { User, AuthError, PostgrestError } from '@supabase/supabase-js';
 import { Profile } from './dto/getMyProfile.dto';
 import { UpdateProfilePayload } from './dto/updateMyProfile';
 import { randomUUID } from 'node:crypto';
-import { ERROR } from '../../core/constants/message';
+import {
+  PROFILE_ERROR,
+  PROFILE_STORAGE,
+} from '../../core/constants/profile.constant';
 import { getUserId } from '../../helpers/getUserId';
 import { updateProfile } from '../../helpers/updateProfile';
 
@@ -16,7 +19,9 @@ import { updateProfile } from '../../helpers/updateProfile';
 export class ProfilesService {
   async me(authHeader?: string) {
     const token = authHeader?.replace('Bearer ', '');
-    if (!token) throw new UnauthorizedException(ERROR.MISSING_ACCESS_TOKEN);
+    if (!token) {
+      throw new UnauthorizedException(PROFILE_ERROR.MISSING_ACCESS_TOKEN);
+    }
 
     const { data: userData, error: userError } = (await supabase.auth.getUser(
       token,
@@ -26,7 +31,9 @@ export class ProfilesService {
     };
 
     if (userError || !userData.user) {
-      throw new UnauthorizedException(userError?.message || 'Invalid token');
+      throw new UnauthorizedException(
+        userError?.message || PROFILE_ERROR.INVALID_TOKEN,
+      );
     }
 
     const userId = userData.user.id;
@@ -87,13 +94,16 @@ export class ProfilesService {
     file?: Express.Multer.File,
   ): Promise<{ profile: Profile }> {
     const userId = await getUserId(authHeader);
-    if (!file) throw new BadRequestException(ERROR.MISSING_FILE);
+    if (!file) {
+      throw new BadRequestException(PROFILE_ERROR.MISSING_FILE);
+    }
 
-    const ext = file.originalname.split('.').pop() || 'jpg';
-    const fileName = `avatars/${userId}/${randomUUID()}.${ext}`;
+    const ext =
+      file.originalname.split('.').pop() || PROFILE_STORAGE.DEFAULT_IMAGE_EXT;
+    const fileName = `${PROFILE_STORAGE.AVATAR_FOLDER}/${userId}/${randomUUID()}.${ext}`;
 
     const { error: uploadError } = await supabase.storage
-      .from('images')
+      .from(PROFILE_STORAGE.IMAGE_BUCKET)
       .upload(fileName, file.buffer, {
         contentType: file.mimetype,
         upsert: true,
@@ -102,7 +112,7 @@ export class ProfilesService {
     if (uploadError) throw new BadRequestException(uploadError.message);
 
     const { data: publicUrl } = supabase.storage
-      .from('images')
+      .from(PROFILE_STORAGE.IMAGE_BUCKET)
       .getPublicUrl(fileName);
 
     const profile = await updateProfile(userId, {
@@ -116,13 +126,16 @@ export class ProfilesService {
     file?: Express.Multer.File,
   ): Promise<{ profile: Profile }> {
     const userId = await getUserId(authHeader);
-    if (!file) throw new BadRequestException(ERROR.MISSING_FILE);
+    if (!file) {
+      throw new BadRequestException(PROFILE_ERROR.MISSING_FILE);
+    }
 
-    const ext = file.originalname.split('.').pop() || 'jpg';
-    const fileName = `cover-photos/${userId}/${randomUUID()}.${ext}`;
+    const ext =
+      file.originalname.split('.').pop() || PROFILE_STORAGE.DEFAULT_IMAGE_EXT;
+    const fileName = `${PROFILE_STORAGE.COVER_FOLDER}/${userId}/${randomUUID()}.${ext}`;
 
     const { error: uploadError } = await supabase.storage
-      .from('images')
+      .from(PROFILE_STORAGE.IMAGE_BUCKET)
       .upload(fileName, file.buffer, {
         contentType: file.mimetype,
         upsert: true,
@@ -131,7 +144,7 @@ export class ProfilesService {
     if (uploadError) throw new BadRequestException(uploadError.message);
 
     const { data: publicUrl } = supabase.storage
-      .from('images')
+      .from(PROFILE_STORAGE.IMAGE_BUCKET)
       .getPublicUrl(fileName);
 
     const profile = await updateProfile(userId, {

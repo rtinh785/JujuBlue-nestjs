@@ -7,9 +7,8 @@ import {
 import { CreatePostDto } from './dto/create-post.dto';
 import { getUserId } from '../../helpers/getUserId';
 import { supabase } from '../../libs/supabase/supabase';
-import { POST_WITH_AUTHOR_SELECT } from '../../core/constants/post.select';
+import { POST_WITH_AUTHOR_SELECT } from '../../core/constants/select/post.select';
 import { randomUUID } from 'node:crypto';
-import { ERROR, POST } from '../../core/constants/message';
 import { PostMediaItem } from '../../types/media.type';
 import {
   DeletePostResponse,
@@ -21,9 +20,20 @@ import { CreateCommentDto } from './dto/create-comment.dto';
 import { Json } from '../../types/database.types';
 import { UpdatePostDto } from './dto/update-post.dto';
 import { SharePostDto } from './dto/share-post.dto';
+import { NotificationsService } from '../notifications/notifications.service';
+import {
+  POST_DEPTH,
+  POST_ERROR,
+  POST_MESSAGE,
+  POST_NOTIFICATION_GROUP_KEY,
+  POST_NOTIFICATION_TYPE,
+  POST_STORAGE,
+  POST_VISIBILITY,
+} from '../../core/constants/post.constant';
 
 type ShareTargetPost = {
   id: string;
+  author_id: string;
   shared_post_id: string | null;
   was_shared_post: boolean;
   depth: number | null;
@@ -31,6 +41,8 @@ type ShareTargetPost = {
 
 @Injectable()
 export class PostsService {
+  constructor(private readonly notificationsService: NotificationsService) {}
+
   private async resolveViewerId(authHeader?: string): Promise<string | null> {
     if (!authHeader) {
       return null;
@@ -112,7 +124,7 @@ export class PostsService {
       .single();
 
     if (findError || !post) {
-      throw new NotFoundException('Root post not found');
+      throw new NotFoundException(POST_ERROR.ROOT_POST_NOT_FOUND);
     }
 
     const currentCount = post.comments_count ?? 0;
@@ -151,8 +163,7 @@ export class PostsService {
       .from('posts')
       .select(POST_WITH_AUTHOR_SELECT)
       .in('id', sharedPostIds)
-      .eq('depth', 0);
-
+      .eq('depth', POST_DEPTH.ROOT);
     if (sharedPostsError) {
       throw new BadRequestException(sharedPostsError.message);
     }
@@ -190,7 +201,7 @@ export class PostsService {
     const visibility = body.visibility;
 
     if (!content && (!media || media.length === 0)) {
-      throw new BadRequestException(POST.MISSING_CONTENT_OR_MEDIA);
+      throw new BadRequestException(POST_ERROR.MISSING_CONTENT_OR_MEDIA);
     }
 
     const { data, error } = await supabase
@@ -202,7 +213,7 @@ export class PostsService {
         visibility,
         parent_post_id: null,
         root_post_id: null,
-        depth: 0,
+        depth: POST_DEPTH.ROOT,
         likes_count: 0,
         comments_count: 0,
         was_shared_post: false,
@@ -227,7 +238,7 @@ export class PostsService {
     const hasMedia = body.media !== undefined;
 
     if (!hasContent && !hasVisibility && !hasMedia) {
-      throw new BadRequestException('Nothing to update');
+      throw new BadRequestException(POST_ERROR.NOTHING_TO_UPDATE);
     }
 
     const { data: existingPost, error: findError } = await supabase
@@ -237,11 +248,11 @@ export class PostsService {
       .single();
 
     if (findError || !existingPost) {
-      throw new NotFoundException('Post not found');
+      throw new NotFoundException(POST_ERROR.NOT_FOUND);
     }
 
     if (existingPost.author_id !== userId) {
-      throw new ForbiddenException('You are not allowed to update this post');
+      throw new ForbiddenException(POST_ERROR.UPDATE_FORBIDDEN);
     }
 
     const updateData: {
@@ -271,12 +282,12 @@ export class PostsService {
 
     if (updateError || !updatedPost) {
       throw new BadRequestException(
-        updateError?.message || 'Failed to update post',
+        updateError?.message || POST_ERROR.UPDATE_FAILED,
       );
     }
 
     return {
-      message: 'Post updated successfully',
+      message: POST_MESSAGE.UPDATED,
       post: updatedPost,
     };
   }
@@ -292,16 +303,16 @@ export class PostsService {
       .single();
 
     if (findError || !targetPost) {
-      throw new NotFoundException('Post not found');
+      throw new NotFoundException(POST_ERROR.NOT_FOUND);
     }
 
     if (targetPost.author_id !== userId) {
-      throw new ForbiddenException('You are not allowed to delete this post');
+      throw new ForbiddenException(POST_ERROR.DELETE_FORBIDDEN);
     }
 
     let postIdsToDelete: string[] = [targetPost.id];
 
-    if (targetPost.depth === 0) {
+    if (targetPost.depth === POST_DEPTH.ROOT) {
       const { data: childPosts, error: childError } = await supabase
         .from('posts')
         .select('id')
@@ -317,13 +328,12 @@ export class PostsService {
       ];
     }
 
-    if (targetPost.depth === 1) {
+    if (targetPost.depth === POST_DEPTH.COMMENT) {
       const { data: replies, error: repliesError } = await supabase
         .from('posts')
         .select('id')
         .eq('parent_post_id', targetPost.id)
-        .eq('depth', 2);
-
+        .eq('depth', POST_DEPTH.REPLY);
       if (repliesError) {
         throw new BadRequestException(repliesError.message);
       }
@@ -365,7 +375,10 @@ export class PostsService {
       throw new BadRequestException(deleteError.message);
     }
 
-    if (targetPost.depth === 1 || targetPost.depth === 2) {
+    if (
+      targetPost.depth === POST_DEPTH.COMMENT ||
+      targetPost.depth === POST_DEPTH.REPLY
+    ) {
       const rootPostId = targetPost.root_post_id;
 
       if (rootPostId) {
@@ -399,7 +412,7 @@ export class PostsService {
     }
 
     return {
-      message: 'Post deleted successfully',
+      message: POST_MESSAGE.DELETED,
       deletedCount: postIdsToDelete.length,
     };
   }
@@ -410,8 +423,9 @@ export class PostsService {
     const { data: publicPosts, error: publicPostsError } = await supabase
       .from('posts')
       .select(POST_WITH_AUTHOR_SELECT)
-      .eq('depth', 0)
-      .eq('visibility', 'public');
+      .eq('depth', POST_DEPTH.ROOT)
+
+      .eq('visibility', POST_VISIBILITY.PUBLIC);
 
     if (publicPostsError) {
       throw new BadRequestException(publicPostsError.message);
@@ -453,8 +467,9 @@ export class PostsService {
       const { data, error } = await supabase
         .from('posts')
         .select(POST_WITH_AUTHOR_SELECT)
-        .eq('depth', 0)
-        .eq('visibility', 'followers')
+        .eq('depth', POST_DEPTH.ROOT)
+
+        .eq('visibility', POST_VISIBILITY.FOLLOWERS)
         .in('author_id', followingIds);
 
       if (error) {
@@ -467,9 +482,10 @@ export class PostsService {
     const { data: myPrivatePosts, error: myPrivatePostsError } = await supabase
       .from('posts')
       .select(POST_WITH_AUTHOR_SELECT)
-      .eq('depth', 0)
+      .eq('depth', POST_DEPTH.ROOT)
+
       .eq('author_id', viewerId)
-      .in('visibility', ['followers', 'private']);
+      .in('visibility', [POST_VISIBILITY.FOLLOWERS, POST_VISIBILITY.PRIVATE]);
 
     if (myPrivatePostsError) {
       throw new BadRequestException(myPrivatePostsError.message);
@@ -522,16 +538,20 @@ export class PostsService {
       .from('posts')
       .select(POST_WITH_AUTHOR_SELECT)
       .eq('author_id', userId)
-      .eq('depth', 0)
+      .eq('depth', POST_DEPTH.ROOT)
+
       .order('created_at', { ascending: false });
 
     // nếu chưa đăng nhập thì chỉ xem đuọc bài công khai
     if (!viewerId) {
-      query = query.eq('visibility', 'public');
+      query = query.eq('visibility', POST_VISIBILITY.PUBLIC);
     } else if (viewerId !== userId) {
       query = canSeeFollowersOnlyPosts
-        ? query.in('visibility', ['public', 'followers'])
-        : query.eq('visibility', 'public');
+        ? query.in('visibility', [
+            POST_VISIBILITY.PUBLIC,
+            POST_VISIBILITY.FOLLOWERS,
+          ])
+        : query.eq('visibility', POST_VISIBILITY.PUBLIC);
     }
 
     const { data, error } = await query;
@@ -557,7 +577,7 @@ export class PostsService {
     files?: Express.Multer.File[],
   ): Promise<{ media: PostMediaItem[] }> {
     if (!files || files.length === 0) {
-      throw new BadRequestException(ERROR.MISSING_FILE);
+      throw new BadRequestException(POST_ERROR.MISSING_FILE);
     }
 
     const uploadedMedia: PostMediaItem[] = [];
@@ -567,16 +587,23 @@ export class PostsService {
       const isVideo = file.mimetype.startsWith('video/');
 
       if (!isImage && !isVideo) {
-        throw new BadRequestException(POST.INVALID_MEDIA_FILE_TYPE);
+        throw new BadRequestException(POST_ERROR.INVALID_MEDIA_FILE_TYPE);
       }
 
       const ext =
-        file.originalname.split('.').pop() || (isImage ? 'jpg' : 'mp4');
-      const folder = isImage ? 'post-images' : 'post-videos';
+        file.originalname.split('.').pop() ||
+        (file.mimetype.startsWith('image/')
+          ? POST_STORAGE.DEFAULT_IMAGE_EXT
+          : POST_STORAGE.DEFAULT_VIDEO_EXT);
+
+      const folder = file.mimetype.startsWith('image/')
+        ? POST_STORAGE.IMAGE_FOLDER
+        : POST_STORAGE.VIDEO_FOLDER;
+
       const fileName = `${folder}/${userId}/${randomUUID()}.${ext}`;
 
       const { error: uploadError } = await supabase.storage
-        .from('images')
+        .from(POST_STORAGE.BUCKET_NAME)
         .upload(fileName, file.buffer, {
           contentType: file.mimetype,
           upsert: true,
@@ -587,7 +614,7 @@ export class PostsService {
       }
 
       const { data: publicUrl } = supabase.storage
-        .from('images')
+        .from(POST_STORAGE.BUCKET_NAME)
         .getPublicUrl(fileName);
 
       uploadedMedia.push({
@@ -606,11 +633,12 @@ export class PostsService {
       .from('posts')
       .select(POST_WITH_AUTHOR_SELECT)
       .eq('id', postId)
-      .eq('depth', 0)
+      .eq('depth', POST_DEPTH.ROOT)
+
       .single();
 
     if (error || !data) {
-      throw new NotFoundException('Post not found');
+      throw new NotFoundException(POST_ERROR.NOT_FOUND);
     }
 
     const [postWithStatus] = await this.attachViewerPostStatus(
@@ -628,12 +656,12 @@ export class PostsService {
 
   async likePost(userId: string, postId: string) {
     if (!postId) {
-      throw new BadRequestException(ERROR.MISSING_POST_ID);
+      throw new BadRequestException(POST_ERROR.MISSING_POST_ID);
     }
 
     const { data: post, error: postError } = await supabase
       .from('posts')
-      .select('id, likes_count')
+      .select('id, author_id, likes_count, depth')
       .eq('id', postId)
       .maybeSingle();
 
@@ -641,7 +669,7 @@ export class PostsService {
       throw new BadRequestException(postError.message);
     }
     if (!post) {
-      throw new BadRequestException(ERROR.POST_NOT_FOUND);
+      throw new BadRequestException(POST_ERROR.NOT_FOUND);
     }
 
     const { data: existingLike, error: existingLikeError } = await supabase
@@ -656,7 +684,7 @@ export class PostsService {
     }
 
     if (existingLike) {
-      throw new BadRequestException(POST.ALREADY_LIKED);
+      throw new BadRequestException(POST_ERROR.ALREADY_LIKED);
     }
 
     const { error } = await supabase
@@ -682,12 +710,22 @@ export class PostsService {
       throw new BadRequestException(updatePostError.message);
     }
 
-    return { message: POST.LIKE_SUCCESS };
+    if (post.depth === 0) {
+      await this.notificationsService.createNotification({
+        recipientId: post.author_id,
+        actorId: userId,
+        type: POST_NOTIFICATION_TYPE.LIKE_POST,
+        targetPostId: post.id,
+        groupKey: POST_NOTIFICATION_GROUP_KEY.likePost(post.id),
+      });
+    }
+
+    return { message: POST_MESSAGE.LIKE_SUCCESS };
   }
 
   async unlikePost(userId: string, postId: string) {
     if (!postId) {
-      throw new BadRequestException(ERROR.MISSING_POST_ID);
+      throw new BadRequestException(POST_ERROR.MISSING_POST_ID);
     }
 
     const { data: post, error: postError } = await supabase
@@ -701,7 +739,7 @@ export class PostsService {
     }
 
     if (!post) {
-      throw new BadRequestException(ERROR.POST_NOT_FOUND);
+      throw new BadRequestException(POST_ERROR.NOT_FOUND);
     }
 
     const { data: existingLike, error: existingLikeError } = await supabase
@@ -716,7 +754,7 @@ export class PostsService {
     }
 
     if (!existingLike) {
-      throw new BadRequestException(POST.NOT_LIKED_YET);
+      throw new BadRequestException(POST_ERROR.NOT_LIKED_YET);
     }
 
     const { error: deleteLikeError } = await supabase
@@ -739,12 +777,12 @@ export class PostsService {
       throw new BadRequestException(updatePostError.message);
     }
 
-    return { message: POST.UNLIKE_SUCCESS };
+    return { message: POST_MESSAGE.UNLIKE_SUCCESS };
   }
 
   async bookmarkPost(userId: string, postId: string) {
     if (!postId) {
-      throw new BadRequestException(ERROR.MISSING_POST_ID);
+      throw new BadRequestException(POST_ERROR.MISSING_POST_ID);
     }
     const { data: post, error: postError } = await supabase
       .from('posts')
@@ -757,7 +795,7 @@ export class PostsService {
     }
 
     if (!post) {
-      throw new BadRequestException(ERROR.POST_NOT_FOUND);
+      throw new BadRequestException(POST_ERROR.NOT_FOUND);
     }
 
     const { data: existing, error: existingError } = await supabase
@@ -772,7 +810,7 @@ export class PostsService {
     }
 
     if (existing) {
-      throw new BadRequestException(POST.ALREADY_BOOKMARKED);
+      throw new BadRequestException(POST_ERROR.ALREADY_BOOKMARKED);
     }
 
     const { error } = await supabase.from('post_bookmarks').insert({
@@ -784,12 +822,12 @@ export class PostsService {
       throw new BadRequestException(error.message);
     }
 
-    return { message: POST.BOOKMARK_SUCCESS };
+    return { message: POST_MESSAGE.BOOKMARK_SUCCESS };
   }
 
   async unbookmarkPost(userId: string, postId: string) {
     if (!postId) {
-      throw new BadRequestException(ERROR.MISSING_POST_ID);
+      throw new BadRequestException(POST_ERROR.MISSING_POST_ID);
     }
 
     const { data: post, error: postError } = await supabase
@@ -803,7 +841,7 @@ export class PostsService {
     }
 
     if (!post) {
-      throw new BadRequestException(ERROR.POST_NOT_FOUND);
+      throw new BadRequestException(POST_ERROR.NOT_FOUND);
     }
 
     const { data: existing, error: existingError } = await supabase
@@ -818,7 +856,7 @@ export class PostsService {
     }
 
     if (!existing) {
-      throw new BadRequestException(POST.NOT_BOOKMARKED_YET);
+      throw new BadRequestException(POST_ERROR.NOT_BOOKMARKED_YET);
     }
 
     const { error: deleteError } = await supabase
@@ -830,7 +868,7 @@ export class PostsService {
       throw new BadRequestException(deleteError.message);
     }
 
-    return { message: POST.UNBOOKMARK_SUCCESS };
+    return { message: POST_MESSAGE.UNBOOKMARK_SUCCESS };
   }
 
   async getCounts(userId: string): Promise<{ postsCount: number }> {
@@ -838,8 +876,7 @@ export class PostsService {
       .from('posts')
       .select('*', { count: 'exact', head: true })
       .eq('author_id', userId)
-      .eq('depth', 0);
-
+      .eq('depth', POST_DEPTH.ROOT);
     if (postsCountError) throw new BadRequestException(postsCountError.message);
 
     return {
@@ -893,7 +930,7 @@ export class PostsService {
 
   async createComment(userId: string, postId: string, body: CreateCommentDto) {
     if (!postId) {
-      throw new BadRequestException(ERROR.MISSING_POST_ID);
+      throw new BadRequestException(POST_ERROR.MISSING_POST_ID);
     }
 
     const content = body.content?.trim() ?? '';
@@ -905,12 +942,12 @@ export class PostsService {
     const parentPostId = body.parentPostId ?? null;
 
     if (!content && (!media || media.length === 0)) {
-      throw new BadRequestException(POST.MISSING_CONTENT_OR_MEDIA);
+      throw new BadRequestException(POST_ERROR.MISSING_CONTENT_OR_MEDIA);
     }
 
     const { data: rootPost, error: rootPostError } = await supabase
       .from('posts')
-      .select('id, depth, comments_count')
+      .select('id, author_id, depth, comments_count')
       .eq('id', postId)
       .maybeSingle();
 
@@ -919,18 +956,26 @@ export class PostsService {
     }
 
     if (!rootPost || rootPost.depth !== 0) {
-      throw new BadRequestException(ERROR.POST_NOT_FOUND);
+      throw new BadRequestException(POST_ERROR.NOT_FOUND);
     }
 
     // Mặc định là tạo cmt cấp 1
     let parentPostIdToSave: string = postId;
     let rootPostIdToSave: string = postId;
-    let depth = 1;
+    let depth: number = POST_DEPTH.COMMENT;
+
+    let replyTargetForNotification: {
+      id: string;
+      author_id: string;
+      parent_post_id: string | null;
+      root_post_id: string | null;
+      depth: number | null;
+    } | null = null;
 
     if (parentPostId) {
       const { data: parentPost, error: parentPostError } = await supabase
         .from('posts')
-        .select('id, parent_post_id, root_post_id, depth')
+        .select('id, author_id, parent_post_id, root_post_id, depth')
         .eq('id', parentPostId)
         .maybeSingle();
 
@@ -939,8 +984,16 @@ export class PostsService {
       }
 
       if (!parentPost) {
-        throw new BadRequestException('Parent comment not found');
+        throw new BadRequestException(POST_ERROR.PARENT_COMMENT_NOT_FOUND);
       }
+
+      replyTargetForNotification = {
+        id: parentPost.id,
+        author_id: parentPost.author_id,
+        parent_post_id: parentPost.parent_post_id,
+        root_post_id: parentPost.root_post_id,
+        depth: parentPost.depth,
+      };
 
       const belongsToThisPost =
         parentPost.root_post_id === postId ||
@@ -948,21 +1001,24 @@ export class PostsService {
 
       if (!belongsToThisPost) {
         throw new BadRequestException(
-          'Parent comment does not belong to this post',
+          POST_ERROR.PARENT_COMMENT_NOT_BELONG_TO_POST,
         );
       }
       // kiểm tra parent comment phải là comment hoặc reply chứ không được là post gốc hay dữ liệu bất thường
-      if (parentPost.depth !== 1 && parentPost.depth !== 2) {
-        throw new BadRequestException('Invalid parent comment depth');
+      if (
+        parentPost.depth !== POST_DEPTH.COMMENT &&
+        parentPost.depth !== POST_DEPTH.REPLY
+      ) {
+        throw new BadRequestException(POST_ERROR.INVALID_PARENT_COMMENT_DEPTH);
       }
 
       parentPostIdToSave =
-        parentPost.depth === 1
+        parentPost.depth === POST_DEPTH.COMMENT
           ? parentPost.id
           : (parentPost.parent_post_id as string);
 
       rootPostIdToSave = postId;
-      depth = 2;
+      depth = POST_DEPTH.REPLY;
     }
 
     const { data: createdComment, error: createCommentError } = await supabase
@@ -971,7 +1027,7 @@ export class PostsService {
         author_id: userId,
         content,
         media,
-        visibility: 'public',
+        visibility: POST_VISIBILITY.PUBLIC,
         parent_post_id: parentPostIdToSave,
         root_post_id: rootPostIdToSave,
         depth,
@@ -998,6 +1054,53 @@ export class PostsService {
       throw new BadRequestException(updateRootPostError.message);
     }
 
+    if (createdComment) {
+      const createdCommentId = createdComment.id;
+
+      if (depth === POST_DEPTH.COMMENT) {
+        await this.notificationsService.createNotification({
+          recipientId: rootPost.author_id,
+          actorId: userId,
+          type: POST_NOTIFICATION_TYPE.COMMENT_POST,
+          targetPostId: postId,
+          targetCommentId: createdCommentId,
+          groupKey: POST_NOTIFICATION_GROUP_KEY.commentPost(postId),
+        });
+      }
+
+      if (depth === POST_DEPTH.REPLY && replyTargetForNotification) {
+        const shouldNotifyPostOwner =
+          rootPost.author_id !== replyTargetForNotification.author_id;
+
+        if (shouldNotifyPostOwner) {
+          await this.notificationsService.createNotification({
+            recipientId: rootPost.author_id,
+            actorId: userId,
+            type: POST_NOTIFICATION_TYPE.COMMENT_POST,
+            targetPostId: postId,
+            targetCommentId: parentPostIdToSave,
+            targetReplyId: createdCommentId,
+            groupKey: POST_NOTIFICATION_GROUP_KEY.commentPost(postId),
+          });
+        }
+
+        await this.notificationsService.createNotification({
+          recipientId: replyTargetForNotification.author_id,
+          actorId: userId,
+          type: POST_NOTIFICATION_TYPE.REPLY_COMMENT,
+          targetPostId: postId,
+          targetCommentId: parentPostIdToSave,
+          targetReplyId: createdCommentId,
+          groupKey: POST_NOTIFICATION_GROUP_KEY.replyComment(
+            replyTargetForNotification.id,
+          ),
+          metadata: {
+            repliedToId: replyTargetForNotification.id,
+          },
+        });
+      }
+    }
+
     const [enrichedComment] = await this.attachViewerPostStatus(
       createdComment ? [createdComment] : [],
       userId,
@@ -1008,7 +1111,7 @@ export class PostsService {
 
   async getComments(postId: string, authHeader?: string) {
     if (!postId) {
-      throw new BadRequestException(ERROR.MISSING_POST_ID);
+      throw new BadRequestException(POST_ERROR.MISSING_POST_ID);
     }
 
     const { data: rootPost, error: rootPostError } = await supabase
@@ -1022,14 +1125,14 @@ export class PostsService {
     }
 
     if (!rootPost || rootPost.depth !== 0) {
-      throw new BadRequestException(ERROR.POST_NOT_FOUND);
+      throw new BadRequestException(POST_ERROR.NOT_FOUND);
     }
 
     const { data: comments, error: commentsError } = await supabase
       .from('posts')
       .select(POST_WITH_AUTHOR_SELECT)
       .eq('root_post_id', postId)
-      .in('depth', [1, 2])
+      .in('depth', [POST_DEPTH.COMMENT, POST_DEPTH.REPLY])
       .order('created_at', { ascending: true });
 
     if (commentsError) {
@@ -1043,7 +1146,7 @@ export class PostsService {
     );
 
     const parentComments = enrichedComments
-      .filter((comment) => comment.depth === 1)
+      .filter((comment) => comment.depth === POST_DEPTH.COMMENT)
       .map((comment) => ({
         ...comment,
         replies: [] as PostWithStatus[],
@@ -1073,11 +1176,11 @@ export class PostsService {
 
   async sharePost(userId: string, postId: string, body: SharePostDto) {
     const content = body.content?.trim() ?? '';
-    const visibility = body.visibility ?? 'public';
+    const visibility = body.visibility ?? POST_VISIBILITY.PUBLIC;
 
     const { data: targetPostData, error: targetPostError } = await supabase
       .from('posts')
-      .select('id, shared_post_id, was_shared_post, depth')
+      .select('id,author_id, shared_post_id, was_shared_post, depth')
       .eq('id', postId)
       .maybeSingle();
 
@@ -1086,6 +1189,10 @@ export class PostsService {
     const targetPost: ShareTargetPost | null = targetPostRow
       ? {
           id: typeof targetPostRow.id === 'string' ? targetPostRow.id : '',
+          author_id:
+            typeof targetPostRow.author_id === 'string'
+              ? targetPostRow.author_id
+              : '',
           shared_post_id:
             typeof targetPostRow.shared_post_id === 'string'
               ? targetPostRow.shared_post_id
@@ -1106,16 +1213,20 @@ export class PostsService {
     }
 
     if (!targetPost || targetPost.depth !== 0) {
-      throw new BadRequestException('Post not found');
+      throw new BadRequestException(POST_ERROR.NOT_FOUND);
     }
 
     if (!targetPost.id) {
-      throw new BadRequestException('Post not found');
+      throw new BadRequestException(POST_ERROR.NOT_FOUND);
+    }
+
+    if (!targetPost.author_id) {
+      throw new BadRequestException(POST_ERROR.POST_AUTHOR_NOT_FOUND);
     }
 
     if (targetPost.was_shared_post && !targetPost.shared_post_id) {
       throw new BadRequestException(
-        'Original shared post is no longer available',
+        POST_ERROR.ORIGINAL_SHARED_POST_NOT_AVAILABLE,
       );
     }
 
@@ -1130,7 +1241,7 @@ export class PostsService {
         visibility,
         parent_post_id: null,
         root_post_id: null,
-        depth: 0,
+        depth: POST_DEPTH.ROOT,
         likes_count: 0,
         comments_count: 0,
         shared_post_id: originalPostId,
@@ -1142,15 +1253,23 @@ export class PostsService {
 
     if (createSharedPostError || !sharedPost) {
       throw new BadRequestException(
-        createSharedPostError?.message || 'Failed to share post',
+        createSharedPostError?.message || POST_ERROR.SHARE_FAILED,
       );
+    }
+
+    const sharedPostRow = sharedPost as Record<string, unknown>;
+    const sharedPostId =
+      typeof sharedPostRow.id === 'string' ? sharedPostRow.id : '';
+
+    if (!sharedPostId) {
+      throw new BadRequestException(POST_ERROR.SHARE_FAILED);
     }
 
     const { error: createShareLogError } = await supabase
       .from('post_shares')
       .insert({
         original_post_id: originalPostId,
-        shared_post_id: sharedPost.id,
+        shared_post_id: sharedPostId,
         user_id: userId,
       });
 
@@ -1166,14 +1285,20 @@ export class PostsService {
 
     if (originalPostError || !originalPost) {
       throw new BadRequestException(
-        originalPostError?.message || 'Original post not found',
+        originalPostError?.message || POST_ERROR.ORIGINAL_POST_NOT_FOUND,
       );
     }
+
+    const originalPostRow = originalPost as Record<string, unknown>;
+    const currentSharesCount =
+      typeof originalPostRow.shares_count === 'number'
+        ? originalPostRow.shares_count
+        : 0;
 
     const { error: updateShareCountError } = await supabase
       .from('posts')
       .update({
-        shares_count: (originalPost.shares_count ?? 0) + 1,
+        shares_count: currentSharesCount + 1,
       })
       .eq('id', originalPostId);
 
@@ -1181,8 +1306,40 @@ export class PostsService {
       throw new BadRequestException(updateShareCountError.message);
     }
 
+    let canRecipientViewSharedPost = visibility === POST_VISIBILITY.PUBLIC;
+
+    if (visibility === POST_VISIBILITY.FOLLOWERS) {
+      const { data: followRow, error: followError } = await supabase
+        .from('follows')
+        .select('id')
+        .eq('follower_id', targetPost.author_id)
+        .eq('following_id', userId)
+        .maybeSingle();
+
+      if (followError) {
+        throw new BadRequestException(followError.message);
+      }
+
+      canRecipientViewSharedPost = !!followRow;
+    }
+
+    if (canRecipientViewSharedPost) {
+      await this.notificationsService.createNotification({
+        recipientId: targetPost.author_id,
+        actorId: userId,
+        type: POST_NOTIFICATION_TYPE.SHARE_POST,
+        targetPostId: targetPost.id,
+        sharePostId: sharedPostId,
+        groupKey: POST_NOTIFICATION_GROUP_KEY.sharePost(targetPost.id),
+        metadata: {
+          sharePostId: sharedPostId,
+          originalPostId,
+        },
+      });
+    }
+
     return {
-      message: 'Post shared successfully',
+      message: POST_MESSAGE.SHARED,
       post: sharedPost,
     };
   }
