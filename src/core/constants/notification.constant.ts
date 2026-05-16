@@ -2,6 +2,11 @@ export const NOTIFICATION_MESSAGE = {
   ALREADY_CLICKED: 'Notification already clicked',
   MARKED_AS_CLICKED: 'Notification marked as clicked',
   GROUP_MARKED_AS_CLICKED: 'Notification group marked as clicked',
+  LIKE_NOTIFICATION_DELETED: 'Like notification deleted',
+  FOLLOW_NOTIFICATION_DELETED: 'Follow notification deleted',
+  SHARE_NOTIFICATION_DELETED: 'Share notification deleted',
+  COMMENT_NOTIFICATIONS_DELETED: 'Comment notifications deleted',
+  POST_NOTIFICATIONS_DELETED: 'Post notifications deleted',
 } as const;
 
 export const NOTIFICATION_ERROR = {
@@ -16,4 +21,15 @@ export const NOTIFICATION_QUERY = {
   DEFAULT_LIMIT: 10,
 } as const;
 
-export const GROUPED_NOTIFICATION_TYPES = ['like_post', 'follow_user'] as const;
+export const NOTIFICATION_TYPE = {
+  LIKE_POST: 'like_post',
+  FOLLOW_USER: 'follow_user',
+  SHARE_POST: 'share_post',
+  COMMENT_POST: 'comment_post',
+  REPLY_COMMENT: 'reply_comment',
+} as const;
+
+export const GROUPED_NOTIFICATION_TYPES = [
+  NOTIFICATION_TYPE.LIKE_POST,
+  NOTIFICATION_TYPE.FOLLOW_USER,
+] as const;

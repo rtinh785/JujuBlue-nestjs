@@ -133,6 +133,11 @@ export class FollowsService {
       throw new BadRequestException(error.message);
     }
 
+    await this.notificationsService.deleteFollowNotification(
+      followerId,
+      followingUserId,
+    );
+
     return { message: FOLLOW_MESSAGE.UNFOLLOW_OK };
   }
 

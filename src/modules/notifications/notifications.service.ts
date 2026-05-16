@@ -9,6 +9,7 @@ import {
   NOTIFICATION_ERROR,
   NOTIFICATION_MESSAGE,
   NOTIFICATION_QUERY,
+  NOTIFICATION_TYPE,
 } from '../../core/constants/notification.constant';
 import { NOTIFICATION_WITH_ACTOR_SELECT } from '../../core/constants/select/notification.select';
 import { isGroupedNotificationType } from '../../helpers/notification.helper';
@@ -209,7 +210,7 @@ export class NotificationsService {
     }
 
     const { data: notifications, error: findError } = await supabase
-      .from('notifications')t 
+      .from('notifications')
       .select('id, type')
       .eq('recipient_id', userId)
       .eq('group_key', groupKey)
@@ -245,5 +246,127 @@ export class NotificationsService {
     return {
       message: NOTIFICATION_MESSAGE.GROUP_MARKED_AS_CLICKED,
     };
+  }
+
+  async getGroupActors(userId: string, groupKey: string) {
+    if (!groupKey) {
+      throw new BadRequestException(NOTIFICATION_ERROR.MISSING_GROUP_KEY);
+    }
+
+    const { data, error } = await supabase
+      .from('notifications')
+      .select(
+        `
+      id,
+      actor:profiles!notifications_actor_id_fkey (
+        id,
+        username,
+        display_name,
+        avatar_url
+      )
+    `,
+      )
+      .eq('recipient_id', userId)
+      .eq('group_key', groupKey)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      throw new BadRequestException(error.message);
+    }
+
+    return {
+      actors: (data ?? []).map((item) => item.actor).filter(Boolean),
+    };
+  }
+
+  async deleteLikeNotification(actorId: string, postId: string) {
+    const { error } = await supabase
+      .from('notifications')
+      .delete()
+      .eq('actor_id', actorId)
+      .eq('type', NOTIFICATION_TYPE.LIKE_POST)
+      .eq('target_post_id', postId);
+
+    if (error) {
+      throw new BadRequestException(error.message);
+    }
+
+    return { message: NOTIFICATION_MESSAGE.LIKE_NOTIFICATION_DELETED };
+  }
+
+  async deleteFollowNotification(actorId: string, recipientId: string) {
+    const { error } = await supabase
+      .from('notifications')
+      .delete()
+      .eq('actor_id', actorId)
+      .eq('recipient_id', recipientId)
+      .eq('type', NOTIFICATION_TYPE.FOLLOW_USER)
+      .eq('target_user_id', actorId);
+
+    if (error) {
+      throw new BadRequestException(error.message);
+    }
+
+    return { message: NOTIFICATION_MESSAGE.FOLLOW_NOTIFICATION_DELETED };
+  }
+
+  async deleteShareNotification(actorId: string, sharePostId: string) {
+    const { error } = await supabase
+      .from('notifications')
+      .delete()
+      .eq('actor_id', actorId)
+      .eq('type', NOTIFICATION_TYPE.SHARE_POST)
+      .eq('share_post_id', sharePostId);
+
+    if (error) {
+      throw new BadRequestException(error.message);
+    }
+
+    return { message: NOTIFICATION_MESSAGE.SHARE_NOTIFICATION_DELETED };
+  }
+
+  async deleteCommentNotifications(postIds: string[]) {
+    if (postIds.length === 0) {
+      return { message: NOTIFICATION_MESSAGE.COMMENT_NOTIFICATIONS_DELETED };
+    }
+
+    const { error } = await supabase
+      .from('notifications')
+      .delete()
+      .or(
+        `target_comment_id.in.(${postIds.join(',')}),target_reply_id.in.(${postIds.join(',')})`,
+      );
+
+    if (error) {
+      throw new BadRequestException(error.message);
+    }
+
+    return { message: NOTIFICATION_MESSAGE.COMMENT_NOTIFICATIONS_DELETED };
+  }
+
+  async deletePostNotifications(postIds: string[]) {
+    if (postIds.length === 0) {
+      return { message: NOTIFICATION_MESSAGE.POST_NOTIFICATIONS_DELETED };
+    }
+
+    const ids = postIds.join(',');
+
+    const { error } = await supabase
+      .from('notifications')
+      .delete()
+      .or(
+        [
+          `target_post_id.in.(${ids})`,
+          `target_comment_id.in.(${ids})`,
+          `target_reply_id.in.(${ids})`,
+          `share_post_id.in.(${ids})`,
+        ].join(','),
+      );
+
+    if (error) {
+      throw new BadRequestException(error.message);
+    }
+
+    return { message: NOTIFICATION_MESSAGE.POST_NOTIFICATIONS_DELETED };
   }
 }

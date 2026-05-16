@@ -42,4 +42,13 @@ export class NotificationsController {
   getNotifications(@CurrentUserId() userId: string) {
     return this.notificationsService.getNotifications(userId);
   }
+
+  @UseGuards(AccessTokenGuard)
+  @Get('groups/:groupKey/actors')
+  getGroupActors(
+    @CurrentUserId() userId: string,
+    @Param('groupKey') groupKey: string,
+  ) {
+    return this.notificationsService.getGroupActors(userId, groupKey);
+  }
 }

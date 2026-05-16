@@ -310,9 +310,21 @@ export class PostsService {
       throw new ForbiddenException(POST_ERROR.DELETE_FORBIDDEN);
     }
 
+    const isRootPost = targetPost.depth === POST_DEPTH.ROOT;
+    const isCommentOrReply =
+      targetPost.depth === POST_DEPTH.COMMENT ||
+      targetPost.depth === POST_DEPTH.REPLY;
+
+    const sharedOriginalPostId =
+      typeof targetPost.shared_post_id === 'string'
+        ? targetPost.shared_post_id
+        : null;
+
+    const isSharedPost = !!sharedOriginalPostId;
+
     let postIdsToDelete: string[] = [targetPost.id];
 
-    if (targetPost.depth === POST_DEPTH.ROOT) {
+    if (isRootPost) {
       const { data: childPosts, error: childError } = await supabase
         .from('posts')
         .select('id')
@@ -334,6 +346,7 @@ export class PostsService {
         .select('id')
         .eq('parent_post_id', targetPost.id)
         .eq('depth', POST_DEPTH.REPLY);
+
       if (repliesError) {
         throw new BadRequestException(repliesError.message);
       }
@@ -345,17 +358,17 @@ export class PostsService {
     }
 
     await supabase.from('post_likes').delete().in('post_id', postIdsToDelete);
+
     await supabase
       .from('post_bookmarks')
       .delete()
       .in('post_id', postIdsToDelete);
 
-    const sharedOriginalPostId =
-      typeof targetPost.shared_post_id === 'string'
-        ? targetPost.shared_post_id
-        : null;
+    if (isRootPost) {
+      await this.notificationsService.deletePostNotifications(postIdsToDelete);
+    }
 
-    if (sharedOriginalPostId) {
+    if (isSharedPost) {
       const { error: deleteShareLogError } = await supabase
         .from('post_shares')
         .delete()
@@ -364,6 +377,17 @@ export class PostsService {
       if (deleteShareLogError) {
         throw new BadRequestException(deleteShareLogError.message);
       }
+
+      await this.notificationsService.deleteShareNotification(
+        userId,
+        targetPost.id,
+      );
+    }
+
+    if (isCommentOrReply) {
+      await this.notificationsService.deleteCommentNotifications(
+        postIdsToDelete,
+      );
     }
 
     const { error: deleteError } = await supabase
@@ -375,10 +399,7 @@ export class PostsService {
       throw new BadRequestException(deleteError.message);
     }
 
-    if (
-      targetPost.depth === POST_DEPTH.COMMENT ||
-      targetPost.depth === POST_DEPTH.REPLY
-    ) {
+    if (isCommentOrReply) {
       const rootPostId = targetPost.root_post_id;
 
       if (rootPostId) {
@@ -386,7 +407,7 @@ export class PostsService {
       }
     }
 
-    if (sharedOriginalPostId) {
+    if (isSharedPost) {
       const { data: originalPost, error: originalPostError } = await supabase
         .from('posts')
         .select('shares_count')
@@ -776,6 +797,8 @@ export class PostsService {
     if (updatePostError) {
       throw new BadRequestException(updatePostError.message);
     }
+
+    await this.notificationsService.deleteLikeNotification(userId, postId);
 
     return { message: POST_MESSAGE.UNLIKE_SUCCESS };
   }
