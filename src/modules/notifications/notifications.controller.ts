@@ -1,4 +1,11 @@
-import { Controller, Get, Param, Patch, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { NotificationsService } from './notifications.service';
 import { AccessTokenGuard } from '../../guards/access-token.guard';
 import { CurrentUserId } from '../../decorators/current-user-id.decorator';
@@ -15,8 +22,15 @@ export class NotificationsController {
 
   @UseGuards(AccessTokenGuard)
   @Get('grouped')
-  getGroupedNotifications(@CurrentUserId() userId: string) {
-    return this.notificationsService.getGroupedNotifications(userId);
+  getGroupedNotifications(
+    @CurrentUserId() userId: string,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    return this.notificationsService.getGroupedNotifications(userId, {
+      limit,
+      cursor,
+    });
   }
 
   @UseGuards(AccessTokenGuard)

@@ -19,6 +19,8 @@ export const NOTIFICATION_ERROR = {
 
 export const NOTIFICATION_QUERY = {
   DEFAULT_LIMIT: 10,
+  LOAD_MORE_LIMIT: 5,
+  MAX_LIMIT: 20,
 } as const;
 
 export const NOTIFICATION_TYPE = {

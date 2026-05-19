@@ -138,13 +138,35 @@ export class NotificationsService {
 
   async getGroupedNotifications(
     userId: string,
-  ): Promise<{ notifications: NotificationListItem[] }> {
-    const { data, error } = await supabase
+    query?: {
+      limit?: string;
+      cursor?: string;
+    },
+  ): Promise<{
+    notifications: NotificationListItem[];
+    nextCursor: string | null;
+    hasMore: boolean;
+  }> {
+    const parsedLimit = Number(query?.limit);
+    const limit =
+      Number.isFinite(parsedLimit) && parsedLimit > 0
+        ? Math.min(parsedLimit, NOTIFICATION_QUERY.MAX_LIMIT)
+        : NOTIFICATION_QUERY.DEFAULT_LIMIT;
+
+    const cursor = query?.cursor;
+
+    let notificationQuery = supabase
       .from('notifications')
       .select(NOTIFICATION_WITH_ACTOR_SELECT)
       .eq('recipient_id', userId)
       .order('created_at', { ascending: false })
-      .limit(NOTIFICATION_QUERY.DEFAULT_LIMIT);
+      .limit(limit);
+
+    if (cursor) {
+      notificationQuery = notificationQuery.lt('created_at', cursor);
+    }
+
+    const { data, error } = await notificationQuery;
 
     if (error) {
       throw new BadRequestException(error.message);
@@ -196,8 +218,12 @@ export class NotificationsService {
       }
     }
 
+    const lastNotification = data?.[data.length - 1] ?? null;
+
     return {
       notifications: notificationList,
+      nextCursor: lastNotification?.created_at ?? null,
+      hasMore: (data?.length ?? 0) === limit,
     };
   }
 
