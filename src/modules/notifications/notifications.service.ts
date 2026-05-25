@@ -160,7 +160,7 @@ export class NotificationsService {
       .select(NOTIFICATION_WITH_ACTOR_SELECT)
       .eq('recipient_id', userId)
       .order('created_at', { ascending: false })
-      .limit(limit);
+      .limit(limit + 1);
 
     if (cursor) {
       notificationQuery = notificationQuery.lt('created_at', cursor);
@@ -172,10 +172,13 @@ export class NotificationsService {
       throw new BadRequestException(error.message);
     }
 
+    const rawNotifications = data ?? [];
+    const paginatedNotifications = rawNotifications.slice(0, limit);
+
     const notificationList: NotificationListItem[] = [];
     const groupedMap = new Map<string, NotificationListItem>();
 
-    for (const notification of data ?? []) {
+    for (const notification of paginatedNotifications) {
       const shouldGroup = isGroupedNotificationType(notification.type);
 
       const listItem: NotificationListItem = {
@@ -217,13 +220,13 @@ export class NotificationsService {
         existingGroup.clicked_at = null;
       }
     }
-
-    const lastNotification = data?.[data.length - 1] ?? null;
+    const lastNotification =
+      paginatedNotifications[paginatedNotifications.length - 1] ?? null;
 
     return {
       notifications: notificationList,
       nextCursor: lastNotification?.created_at ?? null,
-      hasMore: (data?.length ?? 0) === limit,
+      hasMore: rawNotifications.length > limit,
     };
   }
 

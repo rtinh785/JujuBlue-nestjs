@@ -70,3 +70,10 @@ export const POST_NOTIFICATION_GROUP_KEY = {
   replyComment: (commentId: string) => `reply_comment:${commentId}`,
   sharePost: (postId: string) => `share_post:${postId}`,
 } as const;
+
+export const POST_TRENDING = {
+  LIMIT: 5,
+  QUERY_LIMIT: 50,
+  COMMENT_WEIGHT: 2,
+  SHARE_WEIGHT: 3,
+} as const;

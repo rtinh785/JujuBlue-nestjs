@@ -12,8 +12,8 @@ import { randomUUID } from 'node:crypto';
 import { PostMediaItem } from '../../types/media.type';
 import {
   DeletePostResponse,
-  PostWithId,
   PostWithStatus,
+  ShareTargetPost,
   UpdatePostResponse,
 } from '../../types/post.type';
 import { CreateCommentDto } from './dto/create-comment.dto';
@@ -28,16 +28,14 @@ import {
   POST_NOTIFICATION_GROUP_KEY,
   POST_NOTIFICATION_TYPE,
   POST_STORAGE,
+  POST_TRENDING,
   POST_VISIBILITY,
 } from '../../core/constants/post.constant';
-
-type ShareTargetPost = {
-  id: string;
-  author_id: string;
-  shared_post_id: string | null;
-  was_shared_post: boolean;
-  depth: number | null;
-};
+import {
+  attachSharedPosts,
+  attachViewerPostStatus,
+} from '../../helpers/post-enrichment.helper';
+import { sortTrendingPosts } from '../../helpers/post-trending.helper';
 
 @Injectable()
 export class PostsService {
@@ -49,71 +47,6 @@ export class PostsService {
     }
 
     return getUserId(authHeader);
-  }
-
-  private async getPostLikesSet(
-    userId: string,
-    postIds: string[],
-  ): Promise<Set<string>> {
-    if (postIds.length === 0) return new Set();
-
-    const { data, error } = await supabase
-      .from('post_likes')
-      .select('post_id')
-      .eq('user_id', userId)
-      .in('post_id', postIds)
-      .returns<{ post_id: string }[]>();
-
-    if (error) throw new BadRequestException(error.message);
-
-    return new Set((data ?? []).map((x) => x.post_id));
-  }
-
-  private async getPostBookmarksSet(
-    userId: string,
-    postIds: string[],
-  ): Promise<Set<string>> {
-    if (postIds.length === 0) return new Set();
-
-    const { data, error } = await supabase
-      .from('post_bookmarks')
-      .select('post_id')
-      .eq('user_id', userId)
-      .in('post_id', postIds)
-      .returns<{ post_id: string }[]>();
-
-    if (error) throw new BadRequestException(error.message);
-
-    return new Set((data ?? []).map((x) => x.post_id));
-  }
-
-  private async attachViewerPostStatus(
-    posts: PostWithId[],
-    viewerId: string | null,
-  ): Promise<PostWithStatus[]> {
-    if (!viewerId) {
-      return posts.map((post) => ({
-        ...post,
-        is_liked: false,
-        is_bookmark: false,
-      }));
-    }
-
-    const postIds = posts.map((post) => post.id);
-
-    if (postIds.length === 0) {
-      return [];
-    }
-
-    const likedPostIds = await this.getPostLikesSet(viewerId, postIds);
-
-    const bookmarkedPostIds = await this.getPostBookmarksSet(viewerId, postIds);
-
-    return posts.map((post) => ({
-      ...post,
-      is_liked: likedPostIds.has(post.id),
-      is_bookmark: bookmarkedPostIds.has(post.id),
-    }));
   }
   // giảm số lượng cmt
   private async adjustCommentsCount(postId: string, amount: number) {
@@ -138,56 +71,6 @@ export class PostsService {
     if (updateError) {
       throw new BadRequestException(updateError.message);
     }
-  }
-
-  private async attachSharedPosts(
-    posts: PostWithStatus[],
-    viewerId?: string | null,
-  ): Promise<PostWithStatus[]> {
-    const sharedPostIds = [
-      ...new Set(
-        posts
-          .map((post) => post.shared_post_id)
-          .filter((id): id is string => Boolean(id)),
-      ),
-    ]; // Lấy ra tất cả shared_post_id từ danh sách posts => ["123", "456"]
-
-    if (sharedPostIds.length === 0) {
-      return posts.map((post) => ({
-        ...post,
-        shared_post: null,
-      }));
-    }
-
-    const { data: sharedPosts, error: sharedPostsError } = await supabase
-      .from('posts')
-      .select(POST_WITH_AUTHOR_SELECT)
-      .in('id', sharedPostIds)
-      .eq('depth', POST_DEPTH.ROOT);
-    if (sharedPostsError) {
-      throw new BadRequestException(sharedPostsError.message);
-    }
-
-    const sharedPostsWithStatus = await this.attachViewerPostStatus(
-      sharedPosts ?? [],
-      viewerId ?? null,
-    );
-
-    const sharedPostMap = new Map(
-      sharedPostsWithStatus.map((sharedPost) => [sharedPost.id, sharedPost]),
-    );
-
-    return posts.map((post) => {
-      const sharedPostId =
-        typeof post.shared_post_id === 'string' ? post.shared_post_id : null;
-
-      return {
-        ...post,
-        shared_post: sharedPostId
-          ? (sharedPostMap.get(sharedPostId) ?? null)
-          : null,
-      };
-    });
   }
 
   async createPost(userId: string, body: CreatePostDto) {
@@ -437,16 +320,37 @@ export class PostsService {
       deletedCount: postIdsToDelete.length,
     };
   }
-
-  async getFeed(authHeader?: string) {
+  async getFeed(
+    authHeader?: string,
+    query?: {
+      limit?: string;
+      cursor?: string;
+    },
+  ) {
     const viewerId = await this.resolveViewerId(authHeader);
+    const parsedLimit = Number(query?.limit);
+    // kiểm tra parsedLimit có phải số hợp lệ không.
+    const limit =
+      Number.isFinite(parsedLimit) && parsedLimit > 0
+        ? Math.min(parsedLimit, 10)
+        : 5;
 
-    const { data: publicPosts, error: publicPostsError } = await supabase
+    const cursor = query?.cursor;
+
+    let publicPostsQuery = supabase
       .from('posts')
       .select(POST_WITH_AUTHOR_SELECT)
       .eq('depth', POST_DEPTH.ROOT)
+      .eq('visibility', POST_VISIBILITY.PUBLIC)
+      .order('created_at', { ascending: false })
+      .limit(limit + 1);
 
-      .eq('visibility', POST_VISIBILITY.PUBLIC);
+    if (cursor) {
+      publicPostsQuery = publicPostsQuery.lt('created_at', cursor);
+    }
+
+    const { data: publicPosts, error: publicPostsError } =
+      await publicPostsQuery;
 
     if (publicPostsError) {
       throw new BadRequestException(publicPostsError.message);
@@ -458,17 +362,25 @@ export class PostsService {
           new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
       );
 
-      const enrichedPublicPosts = await this.attachViewerPostStatus(
-        sortedPublicPosts,
+      const paginatedPublicPosts = sortedPublicPosts.slice(0, limit);
+      const lastPost =
+        paginatedPublicPosts[paginatedPublicPosts.length - 1] ?? null;
+
+      const enrichedPublicPosts = await attachViewerPostStatus(
+        paginatedPublicPosts,
         viewerId,
       );
 
-      const publicPostsWithSharedPosts = await this.attachSharedPosts(
+      const publicPostsWithSharedPosts = await attachSharedPosts(
         enrichedPublicPosts,
         viewerId,
       );
 
-      return publicPostsWithSharedPosts;
+      return {
+        posts: publicPostsWithSharedPosts,
+        nextCursor: lastPost?.created_at ?? null,
+        hasMore: sortedPublicPosts.length > limit,
+      };
     }
 
     const { data: followingRows, error: followingError } = await supabase
@@ -485,13 +397,23 @@ export class PostsService {
     let followersOnlyPosts: typeof publicPosts = [];
 
     if (followingIds.length > 0) {
-      const { data, error } = await supabase
+      let followersOnlyPostsQuery = supabase
         .from('posts')
         .select(POST_WITH_AUTHOR_SELECT)
         .eq('depth', POST_DEPTH.ROOT)
-
         .eq('visibility', POST_VISIBILITY.FOLLOWERS)
-        .in('author_id', followingIds);
+        .in('author_id', followingIds)
+        .order('created_at', { ascending: false })
+        .limit(limit + 1);
+
+      if (cursor) {
+        followersOnlyPostsQuery = followersOnlyPostsQuery.lt(
+          'created_at',
+          cursor,
+        );
+      }
+
+      const { data, error } = await followersOnlyPostsQuery;
 
       if (error) {
         throw new BadRequestException(error.message);
@@ -500,13 +422,21 @@ export class PostsService {
       followersOnlyPosts = data ?? [];
     }
 
-    const { data: myPrivatePosts, error: myPrivatePostsError } = await supabase
+    let myPrivatePostsQuery = supabase
       .from('posts')
       .select(POST_WITH_AUTHOR_SELECT)
       .eq('depth', POST_DEPTH.ROOT)
-
       .eq('author_id', viewerId)
-      .in('visibility', [POST_VISIBILITY.FOLLOWERS, POST_VISIBILITY.PRIVATE]);
+      .in('visibility', [POST_VISIBILITY.FOLLOWERS, POST_VISIBILITY.PRIVATE])
+      .order('created_at', { ascending: false })
+      .limit(limit + 1);
+
+    if (cursor) {
+      myPrivatePostsQuery = myPrivatePostsQuery.lt('created_at', cursor);
+    }
+
+    const { data: myPrivatePosts, error: myPrivatePostsError } =
+      await myPrivatePostsQuery;
 
     if (myPrivatePostsError) {
       throw new BadRequestException(myPrivatePostsError.message);
@@ -521,16 +451,24 @@ export class PostsService {
         new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
     );
 
-    const enrichedPosts = await this.attachViewerPostStatus(
-      feedPosts,
+    const paginatedPosts = feedPosts.slice(0, limit);
+    const lastPost = paginatedPosts[paginatedPosts.length - 1] ?? null;
+
+    const enrichedPosts = await attachViewerPostStatus(
+      paginatedPosts,
       viewerId,
     );
-    const postsWithSharedPosts = await this.attachSharedPosts(
+
+    const postsWithSharedPosts = await attachSharedPosts(
       enrichedPosts,
       viewerId,
     );
 
-    return postsWithSharedPosts;
+    return {
+      posts: postsWithSharedPosts,
+      nextCursor: lastPost?.created_at ?? null,
+      hasMore: feedPosts.length > limit,
+    };
   }
 
   async getProfilePosts(authHeader: string | undefined, userId: string) {
@@ -581,11 +519,8 @@ export class PostsService {
       throw new BadRequestException(error.message);
     }
 
-    const enrichedPosts = await this.attachViewerPostStatus(
-      data ?? [],
-      viewerId,
-    );
-    const postsWithSharedPosts = await this.attachSharedPosts(
+    const enrichedPosts = await attachViewerPostStatus(data ?? [], viewerId);
+    const postsWithSharedPosts = await attachSharedPosts(
       enrichedPosts,
       viewerId,
     );
@@ -662,12 +597,9 @@ export class PostsService {
       throw new NotFoundException(POST_ERROR.NOT_FOUND);
     }
 
-    const [postWithStatus] = await this.attachViewerPostStatus(
-      [data],
-      viewerId,
-    );
+    const [postWithStatus] = await attachViewerPostStatus([data], viewerId);
 
-    const [postWithSharedPost] = await this.attachSharedPosts(
+    const [postWithSharedPost] = await attachSharedPosts(
       [postWithStatus],
       viewerId,
     );
@@ -939,14 +871,11 @@ export class PostsService {
       .map((postId) => postMap.get(postId)) // lấy ra dc đúng thứ tự rồi nhưng vẫn chứa undefined
       .filter((post): post is NonNullable<typeof post> => !!post); // lọc bỏ undefined
 
-    const enrichedPosts = await this.attachViewerPostStatus(
+    const enrichedPosts = await attachViewerPostStatus(
       sortedBookmarkedPosts,
       userId,
     );
-    const postsWithSharedPosts = await this.attachSharedPosts(
-      enrichedPosts,
-      userId,
-    );
+    const postsWithSharedPosts = await attachSharedPosts(enrichedPosts, userId);
 
     return postsWithSharedPosts;
   }
@@ -1124,7 +1053,7 @@ export class PostsService {
       }
     }
 
-    const [enrichedComment] = await this.attachViewerPostStatus(
+    const [enrichedComment] = await attachViewerPostStatus(
       createdComment ? [createdComment] : [],
       userId,
     );
@@ -1163,7 +1092,7 @@ export class PostsService {
     }
     const viewerId = await this.resolveViewerId(authHeader);
 
-    const enrichedComments = await this.attachViewerPostStatus(
+    const enrichedComments = await attachViewerPostStatus(
       comments ?? [],
       viewerId,
     );
@@ -1364,6 +1293,108 @@ export class PostsService {
     return {
       message: POST_MESSAGE.SHARED,
       post: sharedPost,
+    };
+  }
+
+  async getTrendingPosts(authHeader?: string) {
+    const viewerId = await this.resolveViewerId(authHeader);
+
+    const { data: publicPosts, error: publicPostsError } = await supabase
+      .from('posts')
+      .select(POST_WITH_AUTHOR_SELECT)
+      .eq('depth', POST_DEPTH.ROOT)
+      .eq('visibility', POST_VISIBILITY.PUBLIC)
+      .order('created_at', { ascending: false })
+      .limit(POST_TRENDING.QUERY_LIMIT);
+
+    if (publicPostsError) {
+      throw new BadRequestException(publicPostsError.message);
+    }
+
+    if (!viewerId) {
+      const trendingPublicPosts = sortTrendingPosts(publicPosts ?? []).slice(
+        0,
+        POST_TRENDING.LIMIT,
+      );
+
+      const enrichedPublicPosts = await attachViewerPostStatus(
+        trendingPublicPosts,
+        viewerId,
+      );
+
+      const publicPostsWithSharedPosts = await attachSharedPosts(
+        enrichedPublicPosts,
+        viewerId,
+      );
+
+      return {
+        posts: publicPostsWithSharedPosts,
+      };
+    }
+
+    const { data: followingRows, error: followingError } = await supabase
+      .from('follows')
+      .select('following_id')
+      .eq('follower_id', viewerId);
+
+    if (followingError) {
+      throw new BadRequestException(followingError.message);
+    }
+
+    const followingIds = (followingRows ?? []).map((row) => row.following_id);
+
+    let followersOnlyPosts: typeof publicPosts = [];
+
+    if (followingIds.length > 0) {
+      const { data, error } = await supabase
+        .from('posts')
+        .select(POST_WITH_AUTHOR_SELECT)
+        .eq('depth', POST_DEPTH.ROOT)
+        .eq('visibility', POST_VISIBILITY.FOLLOWERS)
+        .in('author_id', followingIds)
+        .order('created_at', { ascending: false })
+        .limit(POST_TRENDING.QUERY_LIMIT);
+
+      if (error) {
+        throw new BadRequestException(error.message);
+      }
+
+      followersOnlyPosts = data ?? [];
+    }
+
+    const { data: myPrivatePosts, error: myPrivatePostsError } = await supabase
+      .from('posts')
+      .select(POST_WITH_AUTHOR_SELECT)
+      .eq('depth', POST_DEPTH.ROOT)
+      .eq('author_id', viewerId)
+      .in('visibility', [POST_VISIBILITY.FOLLOWERS, POST_VISIBILITY.PRIVATE])
+      .order('created_at', { ascending: false })
+      .limit(POST_TRENDING.QUERY_LIMIT);
+
+    if (myPrivatePostsError) {
+      throw new BadRequestException(myPrivatePostsError.message);
+    }
+
+    const visiblePosts = [
+      ...(publicPosts ?? []),
+      ...(followersOnlyPosts ?? []),
+      ...(myPrivatePosts ?? []),
+    ];
+
+    const trendingPosts = sortTrendingPosts(visiblePosts).slice(
+      0,
+      POST_TRENDING.LIMIT,
+    );
+
+    const enrichedPosts = await attachViewerPostStatus(trendingPosts, viewerId);
+
+    const postsWithSharedPosts = await attachSharedPosts(
+      enrichedPosts,
+      viewerId,
+    );
+
+    return {
+      posts: postsWithSharedPosts,
     };
   }
 }

@@ -7,6 +7,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
   UploadedFiles,
   UseGuards,
@@ -43,8 +44,15 @@ export class PostsController {
   }
 
   @Get('feed')
-  getFeed(@Headers('authorization') authHeader?: string) {
-    return this.postsService.getFeed(authHeader);
+  getFeed(
+    @Headers('authorization') authHeader?: string,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    return this.postsService.getFeed(authHeader, {
+      limit,
+      cursor,
+    });
   }
 
   @UseGuards(AccessTokenGuard)
@@ -114,6 +122,11 @@ export class PostsController {
   @Get('bookmark')
   getBookmark(@CurrentUserId() userId: string) {
     return this.postsService.getBookmark(userId);
+  }
+
+  @Get('trending')
+  getTrendingPosts(@Headers('authorization') authHeader?: string) {
+    return this.postsService.getTrendingPosts(authHeader);
   }
 
   @Get(':postId')

@@ -30,3 +30,18 @@ export type DeletePostResponse = {
   message: string;
   deletedCount: number;
 };
+
+export type ShareTargetPost = {
+  id: string;
+  author_id: string;
+  shared_post_id: string | null;
+  was_shared_post: boolean;
+  depth: number | null;
+};
+
+export type TrendingPost = PostWithId & {
+  created_at: string;
+  likes_count: number | null;
+  comments_count: number | null;
+  shares_count: number | null;
+};
