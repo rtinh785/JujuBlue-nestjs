@@ -25,6 +25,8 @@
     "@nestjs/core": "^11.0.1",
     "@nestjs/mapped-types": "*",
     "@nestjs/platform-express": "^11.0.1",
+    "@nestjs/platform-socket.io": "^11.1.24",
+    "@nestjs/websockets": "^11.1.24",
     "@prisma/client": "^7.6.0",
     "@supabase/supabase-js": "^2.101.1",
     "@types/ejs": "^3.1.5",
@@ -32,7 +34,8 @@
     "class-validator": "^0.15.1",
     "ejs": "^5.0.1",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "socket.io": "^4.8.3"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
