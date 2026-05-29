@@ -238,9 +238,13 @@ export class MessagesService {
       };
     }
 
+    const now = new Date().toISOString();
+
     const { data: conversation, error: conversationError } = await supabase
       .from('conversations')
-      .insert({})
+      .insert({
+        updated_at: now,
+      })
       .select('id')
       .single();
 
@@ -254,7 +258,7 @@ export class MessagesService {
         {
           conversation_id: conversation.id,
           user_id: userId,
-          last_read_at: new Date().toISOString(),
+          last_read_at: now,
         },
         {
           conversation_id: conversation.id,
@@ -391,10 +395,36 @@ export class MessagesService {
 
     await this.ensureConversationParticipant(userId, conversationId);
 
+    const { data: conversation, error: conversationError } = await supabase
+      .from('conversations')
+      .select('last_message_id')
+      .eq('id', conversationId)
+      .single();
+
+    if (conversationError) {
+      throw new BadRequestException(conversationError.message);
+    }
+
+    let lastReadAt = new Date().toISOString();
+
+    if (conversation.last_message_id) {
+      const { data: lastMessage, error: lastMessageError } = await supabase
+        .from('messages')
+        .select('created_at')
+        .eq('id', conversation.last_message_id)
+        .single();
+
+      if (lastMessageError) {
+        throw new BadRequestException(lastMessageError.message);
+      }
+
+      lastReadAt = lastMessage.created_at;
+    }
+
     const { error } = await supabase
       .from('conversation_participants')
       .update({
-        last_read_at: new Date().toISOString(),
+        last_read_at: lastReadAt,
       })
       .eq('conversation_id', conversationId)
       .eq('user_id', userId);
