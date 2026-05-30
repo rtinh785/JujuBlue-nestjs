@@ -1,98 +1,188 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# JujuBlue Backend
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+JujuBlue Backend là REST API và realtime server cho dự án JujuBlue, một mini social platform mô phỏng các chức năng cốt lõi của mạng xã hội như authentication, profile, post, follow, notification, search và realtime messaging.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+Backend được xây dựng bằng NestJS, TypeScript, Supabase/PostgreSQL và Socket.IO. Project hiện sử dụng Supabase client để thao tác database, đồng thời generate TypeScript types từ Supabase để tăng độ an toàn khi query dữ liệu.
 
-## Description
+## Tech Stack
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+- NestJS 11
+- TypeScript
+- Supabase JavaScript Client
+- PostgreSQL via Supabase
+- Socket.IO
+- class-validator
+- Jest
+- pnpm
 
-## Project setup
+## Main Features
 
-```bash
-$ pnpm install
-```
+- Authentication-related API flow.
+- User profile APIs.
+- Follow / unfollow APIs.
+- Post APIs.
+- Notification APIs.
+- Search APIs.
+- Realtime messaging APIs.
+- Socket.IO gateway for realtime message delivery.
+- Supabase generated database types.
+- Cursor-based pagination for message-related data.
 
-## Compile and run the project
+## Project Structure
 
 ```bash
-# development
-$ pnpm run start
-
-# watch mode
-$ pnpm run start:dev
-
-# production mode
-$ pnpm run start:prod
+src/
+├── core/              # Config, constants and shared core files
+├── libs/              # External service clients, for example Supabase
+├── modules/           # Feature modules
+│   ├── auth/
+│   ├── follows/
+│   ├── messages/
+│   ├── notifications/
+│   ├── posts/
+│   ├── profiles/
+│   └── search/
+├── types/             # Generated/shared TypeScript types
+├── app.module.ts
+└── main.ts
 ```
 
-## Run tests
+## Requirements
+
+- Node.js
+- pnpm
+- Supabase project
+- JujuBlue frontend running locally for full app testing
+
+## Environment Variables
+
+Create a `.env` file in the project root.
+
+```env
+DATABASE_URL=""
+DIRECT_URL=""
+SUPABASE_URL=""
+SUPABASE_SERVICE_ROLE_KEY=""
+```
+
+Notes:
+
+- `SUPABASE_URL` is the Supabase project URL.
+- `SUPABASE_SERVICE_ROLE_KEY` is used only on the backend. Do not expose it to the frontend.
+- `DATABASE_URL` and `DIRECT_URL` are used for Supabase type generation / database tooling.
+- Do not commit real environment values.
+
+## Getting Started
+
+Install dependencies:
 
 ```bash
-# unit tests
-$ pnpm run test
-
-# e2e tests
-$ pnpm run test:e2e
-
-# test coverage
-$ pnpm run test:cov
+pnpm install
 ```
 
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+Run the development server:
 
 ```bash
-$ pnpm install -g @nestjs/mau
-$ mau deploy
+pnpm run start:dev
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+The API usually runs at:
 
-## Resources
+```bash
+http://localhost:4000
+```
 
-Check out a few resources that may come in handy when working with NestJS:
+## Available Scripts
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+```bash
+pnpm run start
+```
 
-## Support
+Run the NestJS server.
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+```bash
+pnpm run start:dev
+```
 
-## Stay in touch
+Run the server in watch mode.
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+```bash
+pnpm run build
+```
 
-## License
+Compile the project.
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+```bash
+pnpm run start:prod
+```
+
+Run the compiled production build from `dist`.
+
+```bash
+pnpm run lint
+```
+
+Run ESLint and auto-fix issues.
+
+```bash
+pnpm run format
+```
+
+Format source and test files with Prettier.
+
+```bash
+pnpm run gen:types
+```
+
+Generate Supabase database types into `src/types/database.types.tmp.ts`.
+
+After generating types, copy the generated file into the active database types file if needed:
+
+```bash
+copy src\types\database.types.tmp.ts src\types\database.types.ts
+```
+
+## Messages Flow
+
+The message feature uses both REST API and Socket.IO.
+
+REST API handles:
+
+- Creating or getting a direct conversation.
+- Fetching conversation list.
+- Fetching messages in a conversation.
+- Sending a message.
+- Marking a conversation as read.
+- Getting unread conversation count.
+
+Socket.IO handles:
+
+- Joining user-specific realtime channels.
+- Emitting new messages to online users.
+- Updating frontend state without requiring manual refresh.
+
+Main database tables for messages:
+
+- `conversations`
+- `conversation_participants`
+- `messages`
+
+Unread state is calculated by comparing the latest message timestamp with each participant's `last_read_at`.
+
+## API Documentation
+
+Swagger/OpenAPI is not configured yet.
+
+If API documentation is added later, the recommended route is:
+
+```bash
+http://localhost:4000/api-docs
+```
+
+## Frontend Repository
+
+This backend is designed to work with the JujuBlue Next.js frontend. The frontend handles UI, TanStack Query cache, realtime message updates and full viewport message layout.
+
+## Current Status
+
+The project is currently developed and tested locally. Deployment is not configured yet.
