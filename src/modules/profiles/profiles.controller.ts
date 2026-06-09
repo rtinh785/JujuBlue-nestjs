@@ -19,7 +19,9 @@ export class ProfilesController {
   constructor(private readonly profilesService: ProfilesService) {}
 
   @Get('me')
-  me(@Headers('authorization') authHeader: string) {
+  me(
+    @Headers('authorization') authHeader: string,
+  ): Promise<{ profile: Profile }> {
     return this.profilesService.me(authHeader);
   }
 

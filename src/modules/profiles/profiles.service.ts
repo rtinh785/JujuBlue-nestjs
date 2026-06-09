@@ -17,7 +17,7 @@ import { updateProfile } from '../../helpers/updateProfile';
 
 @Injectable()
 export class ProfilesService {
-  async me(authHeader?: string) {
+  async me(authHeader?: string): Promise<{ profile: Profile }> {
     const token = authHeader?.replace('Bearer ', '');
     if (!token) {
       throw new UnauthorizedException(PROFILE_ERROR.MISSING_ACCESS_TOKEN);
@@ -49,7 +49,7 @@ export class ProfilesService {
 
     if (profileError) throw new BadRequestException(profileError.message);
 
-    if (profile) return profile;
+    if (profile) return { profile };
 
     const meta = (userData.user.user_metadata ?? {}) as {
       full_name?: string;

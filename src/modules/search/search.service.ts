@@ -20,6 +20,13 @@ import {
 
 @Injectable()
 export class SearchService {
+  private buildVisiblePostsFilter(userId: string) {
+    return [
+      `visibility.eq.${POST_VISIBILITY.PUBLIC}`,
+      `and(author_id.eq.${userId},visibility.in.(${POST_VISIBILITY.FOLLOWERS},${POST_VISIBILITY.PRIVATE}))`,
+    ].join(',');
+  }
+
   private normalizeSearchType(type?: string): SearchType {
     if (
       type === SEARCH_TYPE.POSTS ||
@@ -43,21 +50,26 @@ export class SearchService {
   private async searchUsers(keyword: string): Promise<SearchUserItem[]> {
     const keywordPattern = `%${keyword}%`;
 
-    const { data: usernameMatches, error: usernameError } = await supabase
-      .from('profiles')
-      .select('id, username, display_name, avatar_url')
-      .ilike('username', keywordPattern)
-      .limit(SEARCH_QUERY.USERS_LIMIT);
+    const [usernameResult, displayNameResult] = await Promise.all([
+      supabase
+        .from('profiles')
+        .select('id, username, display_name, avatar_url')
+        .ilike('username', keywordPattern)
+        .limit(SEARCH_QUERY.USERS_LIMIT),
+      supabase
+        .from('profiles')
+        .select('id, username, display_name, avatar_url')
+        .ilike('display_name', keywordPattern)
+        .limit(SEARCH_QUERY.USERS_LIMIT),
+    ]);
+
+    const { data: usernameMatches, error: usernameError } = usernameResult;
+    const { data: displayNameMatches, error: displayNameError } =
+      displayNameResult;
 
     if (usernameError) {
       throw new BadRequestException(usernameError.message);
     }
-
-    const { data: displayNameMatches, error: displayNameError } = await supabase
-      .from('profiles')
-      .select('id, username, display_name, avatar_url')
-      .ilike('display_name', keywordPattern)
-      .limit(SEARCH_QUERY.USERS_LIMIT);
 
     if (displayNameError) {
       throw new BadRequestException(displayNameError.message);
@@ -103,24 +115,26 @@ export class SearchService {
     const keywordPattern = `%${keyword}%`;
     const ascending = sort === SEARCH_SORT.OLDEST;
 
-    const { data: publicPosts, error: publicPostsError } = await supabase
-      .from('posts')
-      .select(POST_WITH_AUTHOR_SELECT)
-      .eq('depth', POST_DEPTH.ROOT)
-      .eq('visibility', POST_VISIBILITY.PUBLIC)
-      .ilike('content', keywordPattern)
-      .order('created_at', { ascending })
-      .order('id', { ascending: true })
-      .limit(SEARCH_QUERY.POSTS_LIMIT);
+    const [visiblePostsResult, followingResult] = await Promise.all([
+      supabase
+        .from('posts')
+        .select(POST_WITH_AUTHOR_SELECT)
+        .eq('depth', POST_DEPTH.ROOT)
+        .ilike('content', keywordPattern)
+        .or(this.buildVisiblePostsFilter(userId))
+        .order('created_at', { ascending })
+        .order('id', { ascending: true })
+        .limit(SEARCH_QUERY.POSTS_LIMIT),
+      supabase.from('follows').select('following_id').eq('follower_id', userId),
+    ]);
 
-    if (publicPostsError) {
-      throw new BadRequestException(publicPostsError.message);
+    const { data: directlyVisiblePosts, error: visiblePostsError } =
+      visiblePostsResult;
+    const { data: followingRows, error: followingError } = followingResult;
+
+    if (visiblePostsError) {
+      throw new BadRequestException(visiblePostsError.message);
     }
-
-    const { data: followingRows, error: followingError } = await supabase
-      .from('follows')
-      .select('following_id')
-      .eq('follower_id', userId);
 
     if (followingError) {
       throw new BadRequestException(followingError.message);
@@ -128,7 +142,7 @@ export class SearchService {
 
     const followingIds = (followingRows ?? []).map((row) => row.following_id);
 
-    let followersOnlyPosts: typeof publicPosts = [];
+    let followersOnlyPosts: typeof directlyVisiblePosts = [];
 
     if (followingIds.length > 0) {
       const { data, error } = await supabase
@@ -149,25 +163,9 @@ export class SearchService {
       followersOnlyPosts = data ?? [];
     }
 
-    const { data: myPrivatePosts, error: myPrivatePostsError } = await supabase
-      .from('posts')
-      .select(POST_WITH_AUTHOR_SELECT)
-      .eq('depth', POST_DEPTH.ROOT)
-      .eq('author_id', userId)
-      .in('visibility', [POST_VISIBILITY.FOLLOWERS, POST_VISIBILITY.PRIVATE])
-      .ilike('content', keywordPattern)
-      .order('created_at', { ascending })
-      .order('id', { ascending: true })
-      .limit(SEARCH_QUERY.POSTS_LIMIT);
-
-    if (myPrivatePostsError) {
-      throw new BadRequestException(myPrivatePostsError.message);
-    }
-
     const visiblePosts = [
-      ...(publicPosts ?? []),
+      ...(directlyVisiblePosts ?? []),
       ...(followersOnlyPosts ?? []),
-      ...(myPrivatePosts ?? []),
     ];
 
     const sortedPosts = this.sortPostsByCreatedAt(visiblePosts, sort).slice(
@@ -205,11 +203,10 @@ export class SearchService {
     const shouldSearchUsers =
       type === SEARCH_TYPE.ALL || type === SEARCH_TYPE.USERS;
 
-    const posts = shouldSearchPosts
-      ? await this.searchPosts(userId, keyword, sort)
-      : [];
-
-    const users = shouldSearchUsers ? await this.searchUsers(keyword) : [];
+    const [posts, users] = await Promise.all([
+      shouldSearchPosts ? this.searchPosts(userId, keyword, sort) : [],
+      shouldSearchUsers ? this.searchUsers(keyword) : [],
+    ]);
 
     return {
       posts,
