@@ -8,6 +8,10 @@ const server = express();
 let cachedApp;
 
 async function bootstrapServer() {
+  const fs = require('fs');
+  console.log('>>> /var/task:', fs.readdirSync('/var/task'));
+  console.log('>>> /var/task/dist exists:', fs.existsSync('/var/task/dist'));
+  console.log('>>> /var/task/src exists:', fs.existsSync('/var/task/src'));
   if (!cachedApp) {
     const app = await NestFactory.create(AppModule, new ExpressAdapter(server));
     app.useStaticAssets(join(__dirname, '..', 'public'));
