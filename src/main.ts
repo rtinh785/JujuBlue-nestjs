@@ -11,7 +11,7 @@ async function bootstrap() {
   app.setBaseViewsDir(join(__dirname, '..', 'views'));
   app.setViewEngine('ejs');
   app.enableCors({
-    origin: ['http://localhost:3000'],
+    origin: ['http://localhost:3000', 'https://juju-blue-nextjs.vercel.app'],
     credentials: true,
   });
   await app.listen(process.env.PORT ?? 4000);
